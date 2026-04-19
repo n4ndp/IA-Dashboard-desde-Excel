@@ -60,39 +60,59 @@ export interface UploadResponse {
 
 // ── Dashboard / Analysis Types ──
 
-export type DashboardState = 'empty' | 'loading' | 'generated'
+export type DashboardState = 'empty' | 'loading' | 'error' | 'generated'
 export type WidgetType = 'kpi' | 'chart' | 'insight'
 export type ChartType = 'bar' | 'line' | 'pie'
+export type ChartVariant = 'stacked' | 'grouped' | 'horizontal' | 'multi' | 'area' | 'doughnut'
 export type ValueFormat = 'currency' | 'number' | 'percent'
 export type TrendDirection = 'up' | 'down' | 'neutral'
-export type InsightSeverity = 'info' | 'success' | 'warning'
+export type InsightSeverity = 'positive' | 'negative' | 'warning' | 'info'
 
-export interface DashboardWidget {
+// ── Chart data types ──
+
+export interface ChartDataItem {
+  name: string
+  value: number
+}
+
+export interface SeriesData {
+  name: string
+  data: ChartDataItem[]
+}
+
+// ── Widget types (each independently typed) ──
+
+export interface KpiWidgetData {
   id: string
-  type: WidgetType
-  title: string
-}
-
-export interface ChartWidgetData extends DashboardWidget {
-  type: 'chart'
-  chartType: ChartType
-  data: {
-    labels: string[]
-    values: number[]
-  }
-}
-
-export interface KpiWidgetData extends DashboardWidget {
   type: 'kpi'
+  label: string
   value: number
   format: ValueFormat
-  trend: TrendDirection
+  prefix?: string
+  suffix?: string
+  trend?: TrendDirection
   trendValue?: string
 }
 
-export interface InsightWidgetData extends DashboardWidget {
+export interface ChartWidgetData {
+  id: string
+  type: 'chart'
+  chartType: ChartType
+  variant?: ChartVariant
+  title: string
+  x?: string
+  y?: string
+  data?: ChartDataItem[]
+  series?: SeriesData[]
+  orientation?: string
+  areaStyle?: Record<string, unknown>
+}
+
+export interface InsightWidgetData {
+  id: string
   type: 'insight'
-  text: string
+  emoji: string
+  content: string
   severity: InsightSeverity
 }
 
@@ -100,5 +120,5 @@ export type DashboardWidgetMap = ChartWidgetData | KpiWidgetData | InsightWidget
 
 export interface DashboardConfig {
   widgets: DashboardWidgetMap[]
-  generatedAt?: string
+  generated_at?: string
 }

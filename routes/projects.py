@@ -24,6 +24,7 @@ from schemas import (
     TableSummary,
     ColumnSummary,
     TableSummaryOut,
+    DashboardConfigSchema,
 )
 from services.user_service import get_user
 from services.excel_service import (

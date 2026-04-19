@@ -34,6 +34,13 @@ function formatValue(value: number, format: string): string {
   }
 }
 
+function displayKpiValue(kpi: KpiWidgetData): string {
+  const formatted = formatValue(kpi.value, kpi.format)
+  const prefix = kpi.prefix ?? ''
+  const suffix = kpi.suffix ?? ''
+  return `${prefix}${formatted}${suffix}`
+}
+
 const trendIcon = {
   up: TrendingUp,
   down: TrendingDown,
@@ -57,11 +64,11 @@ const trendColor = {
         class="bg-surface-raised border border-border rounded-lg p-5"
       >
         <p class="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
-          {{ kpi.title }}
+          {{ kpi.label }}
         </p>
         <div class="flex items-end gap-3">
           <span class="text-2xl font-bold text-text-primary">
-            {{ formatValue(kpi.value, kpi.format) }}
+            {{ displayKpiValue(kpi) }}
           </span>
           <div v-if="kpi.trend && kpi.trend !== 'neutral'" class="flex items-center gap-1 pb-1">
             <component

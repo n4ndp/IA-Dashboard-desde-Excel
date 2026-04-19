@@ -1,13 +1,23 @@
 <script setup lang="ts">
 // ── AnalisisTab ──
-// Analysis tab container with 3-state machine: empty → loading → generated.
-// Uses useDashboard composable for state management.
+// Analysis tab container with 4-state machine: empty → loading → generated | error.
+// Uses useDashboard composable for state management with real API integration.
 
 import { useDashboard } from '../../composables/useDashboard'
 import DashboardRenderer from './DashboardRenderer.vue'
-import { BarChart3, Loader2 } from 'lucide-vue-next'
+import { BarChart3, Loader2, AlertCircle } from 'lucide-vue-next'
 
-const { state, widgets, generate } = useDashboard()
+const props = defineProps<{
+  userId: number
+  projectId: number
+  existingDashboard?: { widgets: unknown[] } | null
+}>()
+
+const { state, widgets, errorMessage, generate } = useDashboard(
+  props.userId,
+  props.projectId,
+  props.existingDashboard as { widgets: import('../../types').DashboardWidgetMap[] } | null | undefined,
+)
 </script>
 
 <template>
@@ -36,6 +46,23 @@ const { state, widgets, generate } = useDashboard()
     >
       <Loader2 class="h-8 w-8 animate-spin text-primary" />
       <p class="text-sm text-text-muted">Generando dashboard...</p>
+    </div>
+
+    <!-- Error state -->
+    <div
+      v-else-if="state === 'error'"
+      class="flex flex-col items-center justify-center gap-4 py-24"
+    >
+      <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-surface-overlay ring-1 ring-border">
+        <AlertCircle class="h-8 w-8 text-danger" />
+      </div>
+      <p class="text-sm text-danger">{{ errorMessage }}</p>
+      <button
+        class="btn btn-primary btn-md"
+        @click="generate"
+      >
+        Reintentar
+      </button>
     </div>
 
     <!-- Generated state -->

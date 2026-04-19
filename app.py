@@ -43,7 +43,9 @@ app.add_middleware(
 from routes.users import router as users_router
 from routes.projects import router as projects_router
 from routes.tables import router as tables_router
+from routes.generate import router as generate_router
 
 app.include_router(users_router, prefix="/api")
 app.include_router(projects_router, prefix="/api")
 app.include_router(tables_router, prefix="/api")
+app.include_router(generate_router, prefix="/api")

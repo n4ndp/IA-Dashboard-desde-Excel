@@ -1,30 +1,62 @@
 // ── useDashboard ──
 // State machine composable for the analysis tab.
-// Manages 'empty' → 'loading' → 'generated' lifecycle with mock data (Fase 1).
+// Manages 'empty' → 'loading' → 'generated' | 'error' lifecycle.
+// Calls real API for dashboard generation.
 
 import { ref } from 'vue'
 import type { DashboardState, DashboardWidgetMap } from '../types'
-import { mockDashboard } from './mockDashboard'
 
-export function useDashboard() {
+export function useDashboard(userId: number, projectId: number, existingConfig?: { widgets: DashboardWidgetMap[] } | null) {
   const state = ref<DashboardState>('empty')
   const widgets = ref<DashboardWidgetMap[]>([])
+  const errorMessage = ref<string>('')
+
+  // Initialize from existing dashboard_config if present
+  if (existingConfig?.widgets?.length) {
+    widgets.value = existingConfig.widgets
+    state.value = 'generated'
+  }
 
   async function generate(): Promise<void> {
-    if (state.value !== 'empty') return
+    if (state.value === 'loading') return
 
     state.value = 'loading'
+    errorMessage.value = ''
 
-    // Simulated AI generation delay (Fase 1 — replaced by API call in Fase 2)
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    try {
+      const response = await fetch(
+        `/api/users/${userId}/projects/${projectId}/generate-dashboard`,
+        { method: 'POST' },
+      )
 
-    widgets.value = mockDashboard.widgets
-    state.value = 'generated'
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        const msg = body.detail || `Error ${response.status}: ${response.statusText}`
+
+        if (response.status === 408) {
+          errorMessage.value = 'La generación del dashboard tardó demasiado. Intentalo de nuevo.'
+        } else {
+          errorMessage.value = msg
+        }
+
+        state.value = 'error'
+        return
+      }
+
+      const data = await response.json()
+      widgets.value = data.widgets ?? []
+      state.value = 'generated'
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error de conexión al generar el dashboard'
+      errorMessage.value = msg
+      state.value = 'error'
+    }
   }
 
   return {
     state,
     widgets,
+    errorMessage,
     generate,
   }
 }

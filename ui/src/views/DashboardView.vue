@@ -291,7 +291,12 @@ function handleCollapseToggle() {
           </template>
 
           <!-- Tab: Análisis -->
-          <AnalisisTab v-if="activeTab === 'analisis'" />
+          <AnalisisTab
+            v-if="activeTab === 'analisis'"
+            :user-id="userId"
+            :project-id="projectId"
+            :existing-dashboard="project?.dashboard_config ?? null"
+          />
         </template>
       </main>
     </div>
