@@ -10,10 +10,12 @@ import ProjectCard from '../components/ProjectCard.vue'
 import DeleteConfirmModal from '../components/DeleteConfirmModal.vue'
 import AppButton from '../components/base/AppButton.vue'
 import { useSkeleton } from '../composables/useSkeleton'
+import { useToast } from '../composables/useToast'
 import { Plus, AlertCircle } from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
+const toast = useToast()
 
 const userId = computed(() => Number(route.params.userId))
 
@@ -47,7 +49,9 @@ async function fetchProjects() {
     const result = await getProjects(userId.value)
     projects.value = result.projects
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Error al cargar proyectos'
+    const msg = err instanceof Error ? err.message : 'Error al cargar proyectos'
+    error.value = msg
+    toast.show(msg, 'error')
   } finally {
     loading.value = false
   }
@@ -71,15 +75,18 @@ function cancelDelete() {
   deletingProject.value = null
 }
 
-async function confirmDelete() {
-  if (!deletingProject.value) return
-  try {
-    await deleteProject(userId.value, deletingProject.value.id)
-    projects.value = projects.value.filter(
-      (p) => p.id !== deletingProject.value!.id,
-    )
-  } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Error al eliminar proyecto'
+  async function confirmDelete() {
+    if (!deletingProject.value) return
+    try {
+      await deleteProject(userId.value, deletingProject.value.id)
+      projects.value = projects.value.filter(
+        (p) => p.id !== deletingProject.value!.id,
+      )
+      toast.show('Proyecto eliminado correctamente', 'success')
+    } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error al eliminar proyecto'
+    error.value = msg
+    toast.show(msg, 'error')
   } finally {
     showDeleteModal.value = false
     deletingProject.value = null
@@ -155,7 +162,7 @@ async function confirmDelete() {
         <!-- New project card -->
         <div
           v-if="project.isNewProject"
-          class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border p-8 transition-opacity hover:opacity-80"
+          class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border p-8 transition-all duration-150 ease-out hover:scale-[1.01] hover:bg-[#1c1c1c] hover:border-border/80"
           @click="goToNewProject"
         >
           <Plus class="h-8 w-8 text-text-secondary" />

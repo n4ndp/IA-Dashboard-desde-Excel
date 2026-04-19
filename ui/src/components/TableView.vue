@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ── TableView ──
-// TanStack table with type badges, collapsible, row truncation at 15.
+// TanStack table with type badges, collapsible (local + external prop), row truncation at 15.
 
 import { ref, computed } from 'vue'
 import {
@@ -11,13 +11,27 @@ import {
 import { ChevronDown } from 'lucide-vue-next'
 import type { SingleTableResponse, RowOut } from '../types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   table: SingleTableResponse
+  collapsed?: boolean
+}>(), {
+  collapsed: false,
+})
+
+const emit = defineEmits<{
+  toggle: []
 }>()
 
-const isExpanded = ref(true)
 const maxVisibleRows = 15
 const showAll = ref(false)
+
+// Visibility is controlled entirely by the parent via the collapsed prop
+const bodyVisible = computed(() => !props.collapsed)
+const chevronRotated = computed(() => !props.collapsed)
+
+function toggleExpand() {
+  emit('toggle')
+}
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return '—'
@@ -63,7 +77,7 @@ const colCount = computed(() => props.table.columns.length)
     <!-- Header -->
     <button
       class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-surface-overlay/40"
-      @click="isExpanded = !isExpanded"
+      @click="toggleExpand"
     >
       <div class="flex items-center gap-3">
         <h3 class="text-sm font-medium text-text-primary">{{ sheetName }}</h3>
@@ -71,12 +85,12 @@ const colCount = computed(() => props.table.columns.length)
       </div>
       <ChevronDown
         class="h-3.5 w-3.5 text-text-muted transition-transform duration-200"
-        :class="isExpanded ? 'rotate-180' : ''"
+        :class="chevronRotated ? 'rotate-180' : ''"
       />
     </button>
 
     <!-- Table body -->
-    <div v-show="isExpanded">
+    <div v-show="bodyVisible">
       <div class="overflow-x-auto border-t border-border">
         <table class="min-w-full">
           <thead>

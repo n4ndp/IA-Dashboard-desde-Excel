@@ -8,9 +8,11 @@ import { createProject } from '../services/endpoints'
 import AppFileUpload from '../components/base/AppFileUpload.vue'
 import ProjectNameModal from '../components/ProjectNameModal.vue'
 import { AlertCircle } from 'lucide-vue-next'
+import { useToast } from '../composables/useToast'
 
 const router = useRouter()
 const route = useRoute()
+const toast = useToast()
 
 const userId = computed(() => Number(route.params.userId))
 
@@ -41,9 +43,12 @@ async function confirmProjectName(projectName: string) {
   try {
     const result = await createProject(userId.value, formData)
     showModal.value = false
+    toast.show('Proyecto creado correctamente', 'success')
     router.push(`/u/${userId.value}/p/${result.project_id}`)
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Error al crear proyecto'
+    const msg = err instanceof Error ? err.message : 'Error al crear proyecto'
+    error.value = msg
+    toast.show(msg, 'error')
   } finally {
     uploading.value = false
   }
@@ -51,6 +56,7 @@ async function confirmProjectName(projectName: string) {
 
 function onUploadError(msg: string) {
   error.value = msg
+  toast.show(msg, 'error')
 }
 </script>
 

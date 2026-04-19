@@ -1,20 +1,19 @@
 <script setup lang="ts">
 // ── DashboardView ──
-// Sidebar + content layout. Fetches project, parallel table loading.
-// Metrics cards, TableViews, ChartCards, InsightCard, FileUpload.
+// Dashboard: title + table count, upload section, tables with collapse/expand.
+// Uses useToast for error notifications and useTableCollapse for table visibility.
 
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getProject, getTable } from '../services/endpoints'
 import type { ProjectDetail, SingleTableResponse, TableSummaryOut } from '../types'
 import TableView from '../components/TableView.vue'
-import ChartCard from '../components/ChartCard.vue'
-import InsightCard from '../components/InsightCard.vue'
 import AppFileUpload from '../components/base/AppFileUpload.vue'
-import AppSidebar from '../components/layout/AppSidebar.vue'
 import AppButton from '../components/base/AppButton.vue'
 import { useSkeleton } from '../composables/useSkeleton'
-import { AlertCircle, ArrowLeft, FileSpreadsheet, Rows3, Columns3 } from 'lucide-vue-next'
+import { useToast } from '../composables/useToast'
+import { useTableCollapse } from '../composables/useTableCollapse'
+import { AlertCircle, ArrowLeft } from 'lucide-vue-next'
 
 interface TableLoadState {
   loading: boolean
@@ -24,6 +23,8 @@ interface TableLoadState {
 
 const route = useRoute()
 const router = useRouter()
+const toast = useToast()
+const { expandedTableIds, expandAll, collapseAll, isExpanded, toggle } = useTableCollapse()
 
 const userId = computed(() => Number(route.params.userId))
 const projectId = computed(() => Number(route.params.projectId))
@@ -32,7 +33,6 @@ const project = ref<ProjectDetail | null>(null)
 const tableStates = ref<Map<number, TableLoadState>>(new Map())
 const projectLoading = ref(false)
 const error = ref('')
-const sidebarCollapsed = ref(false)
 
 const { tableRowSkeletons } = useSkeleton()
 
@@ -42,7 +42,9 @@ async function fetchProject() {
   try {
     project.value = await getProject(userId.value, projectId.value)
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Error al cargar proyecto'
+    const msg = err instanceof Error ? err.message : 'Error al cargar proyecto'
+    error.value = msg
+    toast.show(msg, 'error')
   } finally {
     projectLoading.value = false
   }
@@ -56,6 +58,7 @@ async function fetchSingleTable(tableId: number, sheetName: string): Promise<voi
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : `Error al cargar tabla "${sheetName}"`
     tableStates.value.set(tableId, { loading: false, error: msg, data: null })
+    toast.show(msg, 'error')
   }
 }
 
@@ -71,6 +74,8 @@ async function loadTablesParallel() {
 onMounted(async () => {
   await fetchProject()
   if (project.value) {
+    // Expand all tables by default
+    expandAll(project.value.tables.map(t => t.id))
     await loadTablesParallel()
   }
 })
@@ -88,35 +93,39 @@ function goBack() {
 }
 
 async function onAdditionalUpload(_payload: { userId: number; projectId: number }) {
+  toast.show('Datos agregados correctamente', 'success')
   await fetchProject()
   if (project.value) {
     await loadTablesParallel()
   }
 }
 
-// Computed metrics
-const totalRows = computed(() => {
-  if (!project.value) return 0
-  return project.value.tables.reduce((sum, t) => sum + t.row_count, 0)
+function handleExpandAll() {
+  if (!project.value) return
+  expandAll(project.value.tables.map(t => t.id))
+}
+
+const collapseLabel = computed(() => {
+  if (!project.value) return 'Expandir todo'
+  return expandedTableIds.value.size === project.value.tables.length
+    ? 'Compactar todo'
+    : 'Expandir todo'
 })
 
-const totalColumns = computed(() => {
-  if (!project.value) return 0
-  return project.value.tables.reduce((sum, t) => sum + t.column_count, 0)
-})
+function handleCollapseToggle() {
+  if (!project.value) return
+  if (expandedTableIds.value.size === project.value.tables.length) {
+    collapseAll()
+  } else {
+    handleExpandAll()
+  }
+}
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-surface-base">
-    <!-- Sidebar -->
-    <AppSidebar
-      v-if="project"
-      :project-name="project.nombre_archivo"
-      v-model:collapsed="sidebarCollapsed"
-    />
-
+  <div class="min-h-screen bg-surface-base">
     <!-- Main content -->
-    <div class="flex-1 overflow-auto">
+    <div class="overflow-auto">
       <main class="mx-auto max-w-6xl px-6 py-8 animate-fade-in">
         <!-- Back button -->
         <button
@@ -139,65 +148,30 @@ const totalColumns = computed(() => {
         </div>
 
         <template v-else-if="project">
-          <!-- Project title -->
-          <div class="mb-6">
+          <!-- Project title + table count badge -->
+          <div class="mb-6 flex items-center gap-3">
             <h2 class="text-2xl font-bold text-text-primary">
               {{ project.nombre_archivo }}
             </h2>
-            <p class="mt-1 text-sm text-text-muted">
+            <span class="bg-surface-overlay px-2.5 py-0.5 text-xs font-medium text-text-secondary">
               {{ project.tables.length }} tabla{{ project.tables.length !== 1 ? 's' : '' }}
-            </p>
+            </span>
           </div>
 
-          <!-- Metrics cards -->
-          <div class="mb-8 grid gap-4 sm:grid-cols-3">
-            <div class="card p-4">
-              <div class="flex items-center gap-3">
-                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                  <FileSpreadsheet class="h-4 w-4 text-primary" />
-                </div>
-                <div>
-                  <p class="text-2xl font-bold text-text-primary">{{ project.tables.length }}</p>
-                  <p class="text-xs text-text-muted">Tablas</p>
-                </div>
-              </div>
-            </div>
-            <div class="card p-4">
-              <div class="flex items-center gap-3">
-                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10">
-                  <Rows3 class="h-4 w-4 text-emerald-400" />
-                </div>
-                <div>
-                  <p class="text-2xl font-bold text-text-primary">{{ totalRows }}</p>
-                  <p class="text-xs text-text-muted">Filas</p>
-                </div>
-              </div>
-            </div>
-            <div class="card p-4">
-              <div class="flex items-center gap-3">
-                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/10">
-                  <Columns3 class="h-4 w-4 text-sky-400" />
-                </div>
-                <div>
-                  <p class="text-2xl font-bold text-text-primary">{{ totalColumns }}</p>
-                  <p class="text-xs text-text-muted">Columnas</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Charts placeholder -->
+          <!-- Upload additional data -->
           <section class="mb-8">
             <div class="mb-4 flex items-center gap-2">
               <div class="h-px flex-1 bg-border" />
-              <h3 class="text-xs font-medium uppercase tracking-widest text-text-muted">Gráficos</h3>
+              <h3 class="text-xs font-medium uppercase tracking-widest text-text-muted">
+                Agregar más datos
+              </h3>
               <div class="h-px flex-1 bg-border" />
             </div>
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <ChartCard title="Distribución de datos" />
-              <ChartCard title="Tendencias" />
-              <ChartCard title="Resumen estadístico" />
-            </div>
+            <AppFileUpload
+              mode="standalone"
+              :project-id="projectId"
+              @upload-complete="onAdditionalUpload"
+            />
           </section>
 
           <!-- Tables section -->
@@ -208,6 +182,14 @@ const totalColumns = computed(() => {
                 Tablas del proyecto
               </h3>
               <div class="h-px flex-1 bg-border" />
+              <AppButton
+                v-if="project.tables.length > 0"
+                variant="secondary"
+                size="sm"
+                @click="handleCollapseToggle"
+              >
+                {{ collapseLabel }}
+              </AppButton>
             </div>
 
             <div v-if="project.tables.length > 0" class="space-y-6">
@@ -262,37 +244,18 @@ const totalColumns = computed(() => {
                 <TableView
                   v-else-if="getTableState(tableMeta.id).data"
                   :table="getTableState(tableMeta.id).data!"
+                  :collapsed="!isExpanded(tableMeta.id)"
+                  @toggle="toggle(tableMeta.id)"
                 />
               </template>
             </div>
 
             <div v-else class="flex flex-col items-center gap-4 py-16">
               <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-surface-overlay ring-1 ring-border">
-                <FileSpreadsheet class="h-8 w-8 text-text-muted" />
+                <AlertCircle class="h-8 w-8 text-text-muted" />
               </div>
               <p class="text-sm text-text-muted">No hay tablas en este proyecto</p>
             </div>
-          </section>
-
-          <!-- AI Insights -->
-          <section id="insights" class="mb-8">
-            <InsightCard title="AI Insights" :insights="[]" />
-          </section>
-
-          <!-- Upload additional data -->
-          <section class="mb-8">
-            <div class="mb-4 flex items-center gap-2">
-              <div class="h-px flex-1 bg-border" />
-              <h3 class="text-xs font-medium uppercase tracking-widest text-text-muted">
-                Agregar más datos
-              </h3>
-              <div class="h-px flex-1 bg-border" />
-            </div>
-            <AppFileUpload
-              mode="standalone"
-              :project-id="projectId"
-              @upload-complete="onAdditionalUpload"
-            />
           </section>
         </template>
       </main>

@@ -6,7 +6,8 @@
 import { ref } from 'vue'
 import { uploadToProject } from '../../services/endpoints'
 import AppButton from './AppButton.vue'
-import { Upload, AlertCircle, CheckCircle } from 'lucide-vue-next'
+import { Upload } from 'lucide-vue-next'
+import { useToast } from '../../composables/useToast'
 
 interface Props {
   mode?: 'standalone' | 'emit-only'
@@ -29,6 +30,7 @@ const uploadProgress = ref(0)
 const errorMsg = ref('')
 const success = ref(false)
 const isDragOver = ref(false)
+const toast = useToast()
 
 function triggerUpload() {
   fileInput.value?.click()
@@ -54,6 +56,7 @@ async function processFile(file: File) {
   if (validationError) {
     errorMsg.value = validationError
     emit('error', validationError)
+    toast.show(validationError, 'error')
     return
   }
 
@@ -91,11 +94,18 @@ async function processFile(file: File) {
     clearInterval(progressInterval)
     uploadProgress.value = 100
     success.value = true
+    toast.show('Archivo procesado correctamente', 'success')
     emit('upload-complete', { userId: result.user_id, projectId: result.project_id })
+    // Reset visual state after a brief moment
+    setTimeout(() => {
+      uploadProgress.value = 0
+      success.value = false
+    }, 500)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Error al subir archivo'
     errorMsg.value = msg
     emit('error', msg)
+    toast.show(msg, 'error')
   } finally {
     uploading.value = false
   }
@@ -180,22 +190,7 @@ function handleDrop(e: DragEvent) {
         />
       </div>
 
-      <!-- Error -->
-      <div v-if="errorMsg" class="mt-4 text-sm text-danger">
-        <div class="flex items-center justify-center gap-1.5">
-          <AlertCircle class="h-3.5 w-3.5" />
-          {{ errorMsg }}
-        </div>
-      </div>
-
-      <!-- Success -->
-      <div
-        v-if="success"
-        class="mt-4 flex items-center justify-center gap-1.5 text-sm text-success"
-      >
-        <CheckCircle class="h-3.5 w-3.5" />
-        Archivo procesado correctamente
-      </div>
+      <!-- No inline error/success — handled via toast notifications -->
     </div>
   </div>
 </template>
