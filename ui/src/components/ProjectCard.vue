@@ -1,15 +1,18 @@
 <script setup lang="ts">
+// ── ProjectCard ──
+// Project grid card showing metadata, open and delete actions.
+
 import { useRouter } from 'vue-router'
+import { FileSpreadsheet, Trash2 } from 'lucide-vue-next'
+import AppButton from './base/AppButton.vue'
 
-interface Props {
+const props = defineProps<{
   id: number
-  nombreArchivo: string
-  fechaCreacion: string
-  tablaCount: number
+  nombre_archivo: string
+  fecha_creacion: string
+  tabla_count: number
   userId: number
-}
-
-const props = defineProps<Props>()
+}>()
 
 const emit = defineEmits<{
   delete: [id: number]
@@ -35,61 +38,35 @@ function formatDate(dateStr: string): string {
 </script>
 
 <template>
-  <div
-    class="group overflow-hidden rounded-xl border border-slate-800/60 bg-midnight-900/60 transition-all hover:border-blue-500/20 hover:bg-midnight-800/40"
-  >
+  <div class="card group transition-all">
     <div class="p-5">
-      <div class="mb-3 flex items-start justify-between">
-        <div class="flex items-center gap-3">
-          <div
-            class="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 ring-1 ring-blue-500/20"
-          >
-            <svg
-              class="h-5 w-5 text-blue-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke-width="1.5"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
-              />
-            </svg>
-          </div>
-          <div>
-            <h3 class="text-sm font-semibold text-slate-200">
-              {{ nombreArchivo }}
-            </h3>
-            <p class="mt-0.5 text-xs text-slate-500">
-              {{ formatDate(fechaCreacion) }}
-            </p>
-          </div>
+      <div class="mb-3 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-overlay ring-1 ring-border">
+          <FileSpreadsheet class="h-5 w-5 text-text-muted" />
+        </div>
+        <div class="min-w-0 flex-1">
+          <h3 class="truncate text-sm font-semibold text-text-primary">
+            {{ nombre_archivo }}
+          </h3>
+          <p class="text-xs text-text-muted">
+            {{ formatDate(fecha_creacion) }}
+          </p>
         </div>
       </div>
 
-      <div class="mb-4 flex items-center gap-2">
-        <span
-          class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset bg-slate-500/10 text-slate-400 ring-slate-500/20"
-        >
-          {{ tablaCount }} tabla{{ tablaCount !== 1 ? 's' : '' }}
+      <div class="mb-4">
+        <span class="badge rounded-full bg-surface-overlay px-2 py-0.5 text-text-secondary">
+          {{ tabla_count }} tabla{{ tabla_count !== 1 ? 's' : '' }}
         </span>
       </div>
 
       <div class="flex gap-2">
-        <button
-          class="btn-gradient flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white"
-          @click="openProject"
-        >
+        <AppButton variant="primary" size="sm" class="flex-1" @click="openProject">
           Abrir
-        </button>
-        <button
-          class="flex-1 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10"
-          @click="handleDelete"
-        >
-          Eliminar
-        </button>
+        </AppButton>
+        <AppButton variant="danger" size="sm" @click="handleDelete">
+          <Trash2 class="h-3.5 w-3.5" />
+        </AppButton>
       </div>
     </div>
   </div>

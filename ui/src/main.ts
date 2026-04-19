@@ -1,3 +1,6 @@
+// ── main.ts ──
+// App entry: createApp + router mount, import design system.
+
 import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'

@@ -1,163 +1,129 @@
 <script setup lang="ts">
+// ── TableView ──
+// TanStack table with type badges, collapsible, row truncation at 15.
+
 import { ref, computed } from 'vue'
-
-interface Column {
-  id: number
-  name: string
-  type: string
-}
-
-interface Row {
-  id: number
-  data: Record<string, unknown>
-}
+import {
+  useVueTable,
+  getCoreRowModel,
+  type ColumnDef,
+} from '@tanstack/vue-table'
+import { ChevronDown } from 'lucide-vue-next'
+import type { SingleTableResponse, RowOut } from '../types'
 
 const props = defineProps<{
-  sheetName: string
-  columns: Column[]
-  rows: Row[]
+  table: SingleTableResponse
 }>()
 
 const isExpanded = ref(true)
 const maxVisibleRows = 15
-
-const isTruncated = computed(() => props.rows.length > maxVisibleRows)
 const showAll = ref(false)
-
-const visibleRows = computed(() => {
-  if (showAll.value || !isTruncated.value) return props.rows
-  return props.rows.slice(0, maxVisibleRows)
-})
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return '—'
   return String(value)
 }
 
-function toggleExpand() {
-  isExpanded.value = !isExpanded.value
-}
+const colDefs = computed<ColumnDef<RowOut, string>[]>(() =>
+  props.table.columns.map((col) => ({
+    id: col.name,
+    accessorFn: (row: RowOut) => formatValue(row.data[col.name]),
+    header: col.name,
+    cell: (info: { getValue: () => string }) => info.getValue(),
+    size: 120,
+    minSize: 80,
+  })),
+)
 
-function toggleShowAll() {
-  showAll.value = !showAll.value
-}
+const rows = computed(() => props.table.rows)
 
-function typeColor(type: string): string {
-  switch (type) {
-    case 'number':
-      return 'text-sky-400 bg-sky-500/10 ring-sky-500/20'
-    case 'date':
-      return 'text-violet-400 bg-violet-500/10 ring-violet-500/20'
-    case 'string':
-    default:
-      return 'text-slate-400 bg-slate-500/10 ring-slate-500/20'
-  }
-}
+const vueTable = useVueTable({
+  get data() { return rows.value },
+  get columns() { return colDefs.value },
+  getCoreRowModel: getCoreRowModel(),
+})
+
+const isTruncated = computed(() => props.table.rows.length > maxVisibleRows)
+
+const visibleRows = computed(() => {
+  const allRows = vueTable.getRowModel().rows
+  if (showAll.value || !isTruncated.value) return allRows
+  return allRows.slice(0, maxVisibleRows)
+})
+
+// Template helpers — avoid repeating props.table in template
+const sheetName = computed(() => props.table.sheet_name)
+const columns = computed(() => props.table.columns)
+const rowCount = computed(() => props.table.rows.length)
+const colCount = computed(() => props.table.columns.length)
 </script>
 
 <template>
-  <div
-    class="overflow-hidden rounded-xl border border-slate-800/60 bg-midnight-900/60 transition-all"
-  >
-    <!-- Card header -->
+  <div class="rounded-lg border border-border transition-all">
+    <!-- Header -->
     <button
-      class="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-midnight-800/40"
-      @click="toggleExpand"
+      class="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-surface-overlay/40"
+      @click="isExpanded = !isExpanded"
     >
       <div class="flex items-center gap-3">
-        <div
-          class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 ring-1 ring-blue-500/20"
-        >
-          <svg
-            class="h-4 w-4 text-blue-400"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke-width="2"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-2.625 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0 1 18 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5c0 .621-.504 1.125-1.125 1.125m1.5 0h12m-12 0c-.621 0-1.125.504-1.125 1.125M18 12h1.5m-1.5 0c.621 0 1.125.504 1.125 1.125m0 0v1.5c0 .621-.504 1.125-1.125 1.125M18 12c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125"
-            />
-          </svg>
-        </div>
-        <div>
-          <h3 class="text-sm font-semibold text-slate-200">{{ sheetName }}</h3>
-          <p class="mt-0.5 text-xs text-slate-500">
-            {{ rows.length }} filas · {{ columns.length }} columnas
-          </p>
-        </div>
+        <h3 class="text-sm font-medium text-text-primary">{{ sheetName }}</h3>
+        <span class="text-xs text-text-muted">{{ rowCount }} × {{ colCount }}</span>
       </div>
-
-      <svg
-        class="h-4 w-4 text-slate-500 transition-transform"
+      <ChevronDown
+        class="h-3.5 w-3.5 text-text-muted transition-transform duration-200"
         :class="isExpanded ? 'rotate-180' : ''"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke-width="2"
-        stroke="currentColor"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="m19.5 8.25-7.5 7.5-7.5-7.5"
-        />
-      </svg>
+      />
     </button>
 
-    <!-- Table content (collapsible) -->
+    <!-- Table body -->
     <div v-show="isExpanded">
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto border-t border-border">
         <table class="min-w-full">
           <thead>
-            <tr class="border-y border-slate-800/60">
+            <tr>
               <th
                 v-for="col in columns"
                 :key="col.id"
-                class="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500"
+                class="px-4 py-2 text-left text-xs font-medium text-text-muted"
+                style="min-width: 80px"
               >
-                <div class="flex items-center gap-1.5">
-                  {{ col.name }}
-                  <span
-                    class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset"
-                    :class="typeColor(col.type)"
-                  >
-                    {{ col.type }}
-                  </span>
-                </div>
+                {{ col.name }}
               </th>
             </tr>
+            <tr class="border-t border-border">
+              <td
+                v-for="col in columns"
+                :key="'t-' + col.id"
+                class="px-4 py-1"
+              >
+                <span class="badge" :class="`badge-${col.type}`">{{ col.type }}</span>
+              </td>
+            </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/40">
+          <tbody>
             <tr
-              v-for="(row, idx) in visibleRows"
+              v-for="row in visibleRows"
               :key="row.id"
-              class="transition-colors hover:bg-blue-500/[0.03]"
-              :class="idx % 2 === 0 ? 'bg-transparent' : 'bg-slate-900/30'"
+              class="border-t border-border/60 hover:bg-surface-overlay/30"
             >
               <td
                 v-for="col in columns"
                 :key="col.id"
-                class="whitespace-nowrap px-5 py-2.5 text-sm text-slate-300"
+                class="px-4 py-2 text-sm text-text-secondary whitespace-nowrap"
               >
-                {{ formatValue(row.data[col.name]) }}
+                {{ formatValue(row.original.data[col.name]) }}
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <!-- Show more / less -->
-      <div
-        v-if="isTruncated"
-        class="border-t border-slate-800/60 px-5 py-3"
-      >
+      <div v-if="isTruncated" class="border-t border-border px-4 py-2">
         <button
-          class="text-xs font-medium text-blue-400 transition hover:text-blue-300"
-          @click="toggleShowAll"
+          class="text-xs text-text-muted hover:text-text-secondary transition-colors"
+          @click="showAll = !showAll"
         >
-          {{ showAll ? 'Ver menos' : `Ver todas las ${rows.length} filas` }}
+          {{ showAll ? 'Ver menos' : `Ver ${rowCount} filas` }}
         </button>
       </div>
     </div>

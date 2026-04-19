@@ -1,38 +1,38 @@
+// ── useUser ──
+// Singleton reactive user state backed by localStorage.
+
 import { ref, computed } from 'vue'
 
-const STORAGE_KEY_NAME = import.meta.env.VITE_STORAGE_KEY_USER_NAME || 'user_name'
-const STORAGE_KEY_ID = import.meta.env.VITE_STORAGE_KEY_USER_ID || 'user_id'
+const STORAGE_KEY_ID = 'user_id'
+const STORAGE_KEY_NAME = 'user_name'
 
-const name = ref<string>(localStorage.getItem(STORAGE_KEY_NAME) || '')
+// Module-level refs — singleton across the app
 const userId = ref<number | null>(
   localStorage.getItem(STORAGE_KEY_ID)
     ? Number(localStorage.getItem(STORAGE_KEY_ID))
-    : null
+    : null,
 )
+const userName = ref<string>(localStorage.getItem(STORAGE_KEY_NAME) ?? '')
 
 export function useUser() {
-  function setName(n: string) {
-    name.value = n
-    localStorage.setItem(STORAGE_KEY_NAME, n)
-  }
-
-  function setUserId(id: number) {
+  function setUser(id: number, name: string) {
     userId.value = id
+    userName.value = name
     localStorage.setItem(STORAGE_KEY_ID, String(id))
+    localStorage.setItem(STORAGE_KEY_NAME, name)
   }
 
-  function clear() {
-    name.value = ''
+  function clearUser() {
     userId.value = null
-    localStorage.removeItem(STORAGE_KEY_NAME)
+    userName.value = ''
     localStorage.removeItem(STORAGE_KEY_ID)
+    localStorage.removeItem(STORAGE_KEY_NAME)
   }
 
   return {
-    name,
     userId: computed(() => userId.value),
-    setName,
-    setUserId,
-    clear,
+    userName: computed(() => userName.value),
+    setUser,
+    clearUser,
   }
 }

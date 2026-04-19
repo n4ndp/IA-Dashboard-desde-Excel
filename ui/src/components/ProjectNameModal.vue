@@ -1,5 +1,10 @@
 <script setup lang="ts">
+// ── ProjectNameModal ──
+// Teleported modal for entering a project name during upload.
+
 import { ref } from 'vue'
+import AppButton from './base/AppButton.vue'
+import AppInput from './base/AppInput.vue'
 
 const props = defineProps<{
   defaultName: string
@@ -16,58 +21,40 @@ function handleConfirm() {
   if (!projectName.value.trim()) return
   emit('confirm', projectName.value.trim())
 }
-
-function handleCancel() {
-  emit('cancel')
-}
 </script>
 
 <template>
   <Teleport to="body">
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      @click.self="handleCancel"
-    >
-      <div class="glass glow-ring animate-fade-in w-full max-w-sm rounded-2xl p-6">
-        <!-- Top gradient line -->
-        <div class="accent-bar absolute left-6 right-6 top-0 rounded-full"></div>
+    <div class="modal-overlay" @click.self="$emit('cancel')">
+      <div class="modal-container animate-fade-in w-full max-w-sm">
+        <div class="modal-header">
+          <h2 class="text-lg font-bold text-text-primary">Nombre del proyecto</h2>
+          <p class="mt-1 text-sm text-text-muted">
+            Elige un nombre para tu proyecto
+          </p>
+        </div>
 
-        <h2 class="mb-1 text-lg font-bold text-slate-100">Nombre del proyecto</h2>
-        <p class="mb-4 text-sm text-slate-400">
-          Elegí un nombre para tu proyecto
-        </p>
-
-        <div class="mb-5">
-          <label
-            for="project-name-input"
-            class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-500"
-          >
-            Nombre
-          </label>
-          <input
-            id="project-name-input"
+        <div class="modal-body">
+          <AppInput
             v-model="projectName"
-            type="text"
-            class="w-full rounded-lg border border-slate-700/50 bg-midnight-800 px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 transition focus:border-blue-500/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            placeholder="Nombre del proyecto..."
             @keydown.enter="handleConfirm"
-            @keydown.escape="handleCancel"
+            @keydown.escape="$emit('cancel')"
           />
         </div>
 
-        <div class="flex gap-3">
-          <button
-            class="flex-1 rounded-lg border border-slate-700/50 bg-midnight-800 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-midnight-700"
-            @click="handleCancel"
-          >
+        <div class="modal-footer">
+          <AppButton variant="secondary" size="md" @click="$emit('cancel')">
             Cancelar
-          </button>
-          <button
-            class="btn-gradient flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+          </AppButton>
+          <AppButton
+            variant="primary"
+            size="md"
             :disabled="!projectName.trim()"
             @click="handleConfirm"
           >
             Crear
-          </button>
+          </AppButton>
         </div>
       </div>
     </div>
