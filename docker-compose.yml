@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  backend:
+    build:
+      context: .
+      args:
+        BACKEND_PORT: ${BACKEND_PORT:-8000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    ports:
+      - "${BACKEND_EXPOSED_PORT:-8000}:${BACKEND_PORT:-8000}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${BACKEND_PORT:-8000}/docs"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./ui
+      args:
+        BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+
+  adminer:
+    image: adminer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+
+volumes:
+  postgres_data:

@@ -1,0 +1,14 @@
+venv/
+ui/node_modules/
+ui/dist/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.docker
+docs/
+.atl/
+.agents/
+*.md
+!ui/README.md
