@@ -290,6 +290,7 @@ def get_project_detail(db: Session, project_id: int) -> dict:
         "id": proyecto.id,
         "nombre_archivo": proyecto.nombre_archivo,
         "fecha_creacion": proyecto.fecha_creacion,
+        "dashboard_config": proyecto.dashboard_config,
         "tables": [
             {
                 "id": t.id,
@@ -339,6 +340,7 @@ def rename_project(db: Session, project_id: int, new_name: str) -> dict:
             }
             for t in proyecto.tablas
         ],
+        "dashboard_config": proyecto.dashboard_config,
     }
 
 

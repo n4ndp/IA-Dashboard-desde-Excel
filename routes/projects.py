@@ -132,11 +132,21 @@ def get_project(user_id: int, project_id: int, db: Session = Depends(get_db)):
     """Get full project detail with lightweight table summaries."""
     detail = _validate_ownership(db, user_id, project_id)
 
+    # Build dashboard_config if present
+    dashboard_config = None
+    if detail.get("dashboard_config"):
+        dc = detail["dashboard_config"]
+        dashboard_config = DashboardConfigSchema(
+            widgets=dc.get("widgets", []),
+            generated_at=dc.get("generated_at"),
+        )
+
     return ProjectDetailSchema(
         id=detail["id"],
         nombre_archivo=detail["nombre_archivo"],
         fecha_creacion=detail["fecha_creacion"],
         tables=[TableSummaryOut(**t) for t in detail["tables"]],
+        dashboard_config=dashboard_config,
     )
 
 
@@ -155,11 +165,21 @@ def rename_project_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
+    # Build dashboard_config if present
+    dashboard_config = None
+    if detail.get("dashboard_config"):
+        dc = detail["dashboard_config"]
+        dashboard_config = DashboardConfigSchema(
+            widgets=dc.get("widgets", []),
+            generated_at=dc.get("generated_at"),
+        )
+
     return ProjectDetailSchema(
         id=detail["id"],
         nombre_archivo=detail["nombre_archivo"],
         fecha_creacion=detail["fecha_creacion"],
         tables=[TableSummaryOut(**t) for t in detail["tables"]],
+        dashboard_config=dashboard_config,
     )
 
 

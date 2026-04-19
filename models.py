@@ -39,6 +39,8 @@ class Proyecto(Base):
     nombre_archivo = Column(String, nullable=False)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 
+    dashboard_config = Column(JSON, nullable=True, default=None)
+
     usuario = relationship("Usuario", back_populates="proyectos")
     tablas = relationship("Tabla", back_populates="proyecto", cascade="all, delete-orphan")
 

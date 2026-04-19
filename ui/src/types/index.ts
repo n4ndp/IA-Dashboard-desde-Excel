@@ -25,6 +25,7 @@ export interface ProjectDetail {
   nombre_archivo: string
   fecha_creacion: string
   tables: TableSummaryOut[]
+  dashboard_config: DashboardConfig | null
 }
 
 export interface ColumnOut {
@@ -55,4 +56,49 @@ export interface UploadResponse {
   user_id: number
   project_id: number
   tables: TableSummaryOut[]
+}
+
+// ── Dashboard / Analysis Types ──
+
+export type DashboardState = 'empty' | 'loading' | 'generated'
+export type WidgetType = 'kpi' | 'chart' | 'insight'
+export type ChartType = 'bar' | 'line' | 'pie'
+export type ValueFormat = 'currency' | 'number' | 'percent'
+export type TrendDirection = 'up' | 'down' | 'neutral'
+export type InsightSeverity = 'info' | 'success' | 'warning'
+
+export interface DashboardWidget {
+  id: string
+  type: WidgetType
+  title: string
+}
+
+export interface ChartWidgetData extends DashboardWidget {
+  type: 'chart'
+  chartType: ChartType
+  data: {
+    labels: string[]
+    values: number[]
+  }
+}
+
+export interface KpiWidgetData extends DashboardWidget {
+  type: 'kpi'
+  value: number
+  format: ValueFormat
+  trend: TrendDirection
+  trendValue?: string
+}
+
+export interface InsightWidgetData extends DashboardWidget {
+  type: 'insight'
+  text: string
+  severity: InsightSeverity
+}
+
+export type DashboardWidgetMap = ChartWidgetData | KpiWidgetData | InsightWidgetData
+
+export interface DashboardConfig {
+  widgets: DashboardWidgetMap[]
+  generatedAt?: string
 }

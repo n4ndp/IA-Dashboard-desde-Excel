@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ── DashboardView ──
-// Dashboard: title + table count, upload section, tables with collapse/expand.
+// Dashboard: tab system (Datos | Análisis), title + table count, upload section, tables with collapse/expand.
 // Uses useToast for error notifications and useTableCollapse for table visibility.
 
 import { ref, onMounted, computed } from 'vue'
@@ -10,10 +10,13 @@ import type { ProjectDetail, SingleTableResponse, TableSummaryOut } from '../typ
 import TableView from '../components/TableView.vue'
 import AppFileUpload from '../components/base/AppFileUpload.vue'
 import AppButton from '../components/base/AppButton.vue'
+import AnalisisTab from '../components/analysis/AnalisisTab.vue'
 import { useSkeleton } from '../composables/useSkeleton'
 import { useToast } from '../composables/useToast'
 import { useTableCollapse } from '../composables/useTableCollapse'
 import { AlertCircle, ArrowLeft } from 'lucide-vue-next'
+
+const activeTab = ref<'datos' | 'analisis'>('datos')
 
 interface TableLoadState {
   loading: boolean
@@ -158,6 +161,34 @@ function handleCollapseToggle() {
             </span>
           </div>
 
+          <!-- Tab system -->
+          <div class="mb-6 flex border-b border-border">
+            <button
+              class="px-4 py-2.5 text-sm font-medium transition-colors"
+              :class="
+                activeTab === 'datos'
+                  ? 'border-b-2 border-primary text-text-primary'
+                  : 'text-text-muted hover:text-text-secondary'
+              "
+              @click="activeTab = 'datos'"
+            >
+              Datos
+            </button>
+            <button
+              class="px-4 py-2.5 text-sm font-medium transition-colors"
+              :class="
+                activeTab === 'analisis'
+                  ? 'border-b-2 border-primary text-text-primary'
+                  : 'text-text-muted hover:text-text-secondary'
+              "
+              @click="activeTab = 'analisis'"
+            >
+              Análisis
+            </button>
+          </div>
+
+          <!-- Tab: Datos (existing content) -->
+          <template v-if="activeTab === 'datos'">
           <!-- Upload additional data -->
           <section class="mb-8">
             <div class="mb-4 flex items-center gap-2">
@@ -257,6 +288,10 @@ function handleCollapseToggle() {
               <p class="text-sm text-text-muted">No hay tablas en este proyecto</p>
             </div>
           </section>
+          </template>
+
+          <!-- Tab: Análisis -->
+          <AnalisisTab v-if="activeTab === 'analisis'" />
         </template>
       </main>
     </div>

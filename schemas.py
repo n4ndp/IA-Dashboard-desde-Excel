@@ -99,9 +99,23 @@ class ProjectListResponse(BaseModel):
     projects: list[ProjectSummary]
 
 
+class DashboardWidgetSchema(BaseModel):
+    """Flexible widget schema — stored as dict for extensibility."""
+    id: str
+    type: str
+    title: str
+
+
+class DashboardConfigSchema(BaseModel):
+    """Dashboard configuration with an array of widget dicts."""
+    widgets: list[dict[str, Any]]
+    generated_at: datetime | None = None
+
+
 class ProjectDetail(BaseModel):
     """Full project detail with tables for the project detail view."""
     id: int
     nombre_archivo: str
     fecha_creacion: datetime
     tables: list[TableSummaryOut]
+    dashboard_config: DashboardConfigSchema | None = None
