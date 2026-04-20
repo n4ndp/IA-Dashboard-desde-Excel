@@ -164,7 +164,8 @@ DESIGNER_SCHEMA = {
 
 
 def _build_plan_prompt(tables_context: list[dict]) -> str:
-    """Build the Planificador system prompt with table metadata."""
+    import json
+
     table_descriptions = []
     for t in tables_context:
         cols = ", ".join(f"{c['name']}({c['type']})" for c in t.get("columns", []))
@@ -172,7 +173,6 @@ def _build_plan_prompt(tables_context: list[dict]) -> str:
         for row in t.get("rows", [])[:5]:
             sample_lines.append("    " + json.dumps(row, ensure_ascii=False, default=str))
         sample_str = "\n".join(sample_lines) if sample_lines else "    (sin datos)"
-
         table_descriptions.append(
             f"- Tabla '{t['sheet_name']}' (id={t['id']}): {t.get('row_count', '?')} filas\n"
             f"  Columnas: {cols}\n"
@@ -181,7 +181,7 @@ def _build_plan_prompt(tables_context: list[dict]) -> str:
 
     tables_block = "\n".join(table_descriptions)
 
-    return f"""Eres un planificador de análisis de datos experto. Analiza las tablas y determina qué funciones ejecutar para generar insights de máximo valor.
+    return f"""Eres un Arquitecto de Datos experto en análisis de negocio. Tu misión es diseñar el plan de análisis óptimo para construir un dashboard de alto impacto.
 
 ## TABLAS DEL PROYECTO
 
@@ -189,58 +189,310 @@ def _build_plan_prompt(tables_context: list[dict]) -> str:
 
 ## FUNCIONES DISPONIBLES
 
-1. get_column_summary(table, column) — resumen de columna (min, max, nulos, únicos, top3)
-2. calculate_kpi(table, agg_col, operation, filter_col, filter_val) — KPI agregado [SUM|AVG|MAX|MIN|COUNT], filtro opcional
-3. period_over_period_growth(table, date_col, agg_col, operation, interval) — crecimiento vs periodo anterior [month|quarter|year]
-4. group_by_category(table, group_col, agg_col, operation, limit) — agrupar por categoría [{{name, value}}]
-5. time_series_trend(table, date_col, agg_col, operation, interval) — serie temporal [{{period, value}}]
-6. cross_tabulation(table, group_col_1, group_col_2, agg_col, operation, limit) — tabla cruzada {{categories, series}}
-7. distribution_bins(table, numeric_col, bins) — distribución en rangos [{{range, count}}]
-8. find_top_bottom_records(table, entity_col, agg_col, operation, n) — top/bottom N {{top, bottom}}
-9. correlation_check(table, num_col_1, num_col_2) — correlación Pearson + puntos scatter
-10. join_and_aggregate(table1, table2, join_col1, join_col2, group_col, agg_col, operation, limit) — join + agregación
+1. get_column_summary(table, column)
+   → Retorna: min, max, nulos, cantidad_unicos, top3_frecuentes
+   → Úsala para: explorar columnas antes de graficar, detectar cardinalidad
+
+2. calculate_kpi(table, agg_col, operation, filter_col, filter_val)
+   → Retorna: valor único (número)
+   → Úsala para: KPI cards — totales, promedios, máximos
+
+3. period_over_period_growth(table, date_col, agg_col, operation, interval)
+   → Retorna: valor_actual, valor_anterior, pct_cambio
+   → Úsala para: KPIs con trend (↑ +12% vs mes anterior)
+   → interval: "month" | "quarter" | "year"
+
+4. group_by_category(table, group_col, agg_col, operation, limit)
+   → Retorna: [{{name, value}}] ordenado desc
+   → Úsala para: bar charts, pie/donut charts
+
+5. time_series_trend(table, date_col, agg_col, operation, interval)
+   → Retorna: [{{period, value}}] cronológico
+   → Úsala para: line charts, area charts
+   → interval: "day" | "week" | "month" | "quarter"
+
+6. cross_tabulation(table, group_col_1, group_col_2, agg_col, operation, limit)
+   → Retorna: {{categories: [...], series: [{{name, data: [...]}}]}}
+   → Úsala para: stacked bar charts (2 dimensiones)
+
+7. distribution_bins(table, numeric_col, bins)
+   → Retorna: [{{range, count}}]
+   → Úsala para: histogramas — entender distribución de precios, edades, etc.
+
+8. find_top_bottom_records(table, entity_col, agg_col, operation, n)
+   → Retorna: {{top: [{{name, value}}], bottom: [{{name, value}}]}}
+   → Úsala para: ranking charts + insights accionables
+
+9. correlation_check(table, num_col_1, num_col_2)
+   → Retorna: {{pearson_r, interpretation, scatter_points: [{{x, y}}]}}
+   → Úsala para: scatter charts + insights de correlación
+
+10. join_and_aggregate(table1, table2, join_col1, join_col2, group_col, agg_col, operation, limit)
+    → Retorna: [{{name, value}}] del join
+    → Úsala para: análisis cruzados entre tablas relacionadas
 
 ## REGLAS
 
-1. Selecciona 4-8 funciones que maximicen los insights del dataset
-2. Si hay columna de fecha → incluye time_series_trend y period_over_period_growth
-3. Si hay columna numérica → incluye calculate_kpi y distribution_bins
-4. Si hay categoría + número → incluye group_by_category
-5. Si hay 2+ columnas numéricas → incluye correlation_check
-6. El parámetro `table` usa el sheet_name de las tablas listadas arriba
-7. Todos los valores de parámetros deben ser strings
-8. El campo `message` describe tu estrategia para el diseñador del dashboard"""
+- Solicita entre 5 y 8 funciones (no menos, no más)
+- Si hay columna de fecha → SIEMPRE incluye time_series_trend + period_over_period_growth
+- Si hay columna numérica → SIEMPRE incluye calculate_kpi
+- Si hay 2 columnas categóricas → incluye cross_tabulation
+- Si hay 2 columnas numéricas → incluye correlation_check
+- El campo `message` es tu briefing para el Diseñador: explica qué gráficos sugieres y por qué
+- Todos los valores de parámetros deben ser strings
+
+## EJEMPLOS FEW-SHOT
+
+### Ejemplo 1 — Dataset de Ventas (fecha + categoría + monto)
+Input: Tabla 'ventas' con columnas: fecha(date), categoria(string), region(string), monto(number), cantidad(number)
+
+Output correcto:
+{{
+  "ejecutar": [
+    {{
+      "function_name": "calculate_kpi",
+      "parametros": {{"table": "ventas", "agg_col": "monto", "operation": "SUM", "filter_col": "", "filter_val": ""}},
+      "justificacion": "KPI principal: total de ventas en el período"
+    }},
+    {{
+      "function_name": "period_over_period_growth",
+      "parametros": {{"table": "ventas", "date_col": "fecha", "agg_col": "monto", "operation": "SUM", "interval": "month"}},
+      "justificacion": "KPI de tendencia: crecimiento vs mes anterior para mostrar momentum"
+    }},
+    {{
+      "function_name": "time_series_trend",
+      "parametros": {{"table": "ventas", "date_col": "fecha", "agg_col": "monto", "operation": "SUM", "interval": "month"}},
+      "justificacion": "Serie temporal mensual para el área/line chart de tendencia"
+    }},
+    {{
+      "function_name": "group_by_category",
+      "parametros": {{"table": "ventas", "group_col": "categoria", "agg_col": "monto", "operation": "SUM", "limit": "6"}},
+      "justificacion": "Ventas por categoría para bar chart o donut chart"
+    }},
+    {{
+      "function_name": "group_by_category",
+      "parametros": {{"table": "ventas", "group_col": "region", "agg_col": "monto", "operation": "SUM", "limit": "8"}},
+      "justificacion": "Ventas por región para bar chart horizontal (etiquetas largas)"
+    }},
+    {{
+      "function_name": "find_top_bottom_records",
+      "parametros": {{"table": "ventas", "entity_col": "categoria", "agg_col": "monto", "operation": "SUM", "n": "3"}},
+      "justificacion": "Top 3 y bottom 3 categorías para insights accionables"
+    }}
+  ],
+  "message": "Diseñador: tengo datos para 4 gráficos y 2 KPIs. Sugiero: (1) KPI Total Ventas con trend de crecimiento, (2) KPI Ticket Promedio, (3) Area chart de tendencia mensual, (4) Bar chart de ventas por categoría, (5) Bar horizontal de ventas por región, (6) Donut de distribución. Los insights deben mencionar la categoría líder y la región con menor desempeño."
+}}
+
+### Ejemplo 2 — Dataset de RRHH (sin fechas)
+Input: Tabla 'empleados' con columnas: nombre(string), departamento(string), salario(number), nivel(string), antiguedad(number)
+
+Output correcto:
+{{
+  "ejecutar": [
+    {{
+      "function_name": "calculate_kpi",
+      "parametros": {{"table": "empleados", "agg_col": "salario", "operation": "AVG", "filter_col": "", "filter_val": ""}},
+      "justificacion": "KPI: salario promedio de la empresa"
+    }},
+    {{
+      "function_name": "group_by_category",
+      "parametros": {{"table": "empleados", "group_col": "departamento", "agg_col": "salario", "operation": "AVG", "limit": "8"}},
+      "justificacion": "Salario promedio por departamento para bar chart"
+    }},
+    {{
+      "function_name": "cross_tabulation",
+      "parametros": {{"table": "empleados", "group_col_1": "departamento", "group_col_2": "nivel", "agg_col": "salario", "operation": "COUNT", "limit": "6"}},
+      "justificacion": "Headcount por departamento y nivel para stacked bar chart"
+    }},
+    {{
+      "function_name": "distribution_bins",
+      "parametros": {{"table": "empleados", "numeric_col": "salario", "bins": "5"}},
+      "justificacion": "Distribución salarial para histograma — detectar concentración de rangos"
+    }},
+    {{
+      "function_name": "correlation_check",
+      "parametros": {{"table": "empleados", "num_col_1": "antiguedad", "num_col_2": "salario"}},
+      "justificacion": "Correlación antigüedad-salario para scatter chart e insight"
+    }},
+    {{
+      "function_name": "find_top_bottom_records",
+      "parametros": {{"table": "empleados", "entity_col": "departamento", "agg_col": "salario", "operation": "AVG", "n": "3"}},
+      "justificacion": "Top/bottom departamentos por salario para insights de equidad"
+    }}
+  ],
+  "message": "Diseñador: sin fechas, enfocarse en estructura organizacional. Sugiero: (1) KPI Headcount total, (2) KPI Salario promedio, (3) Bar horizontal salario por dept, (4) Stacked bar headcount por dept+nivel, (5) Histograma distribución salarial, (6) Scatter correlación antigüedad-salario. Insight clave: mencionar el dept con mayor/menor salario y si la correlación antigüedad-salario es significativa."
+}}"""
 
 
 def _build_designer_prompt(execution_results: dict) -> str:
-    """Build the Diseñador system prompt with analytical results."""
-    results_str = json.dumps(execution_results, ensure_ascii=False, default=str, indent=2)
+    import json
+
+    results_str = json.dumps(execution_results, ensure_ascii=False, indent=2)
     strategy = execution_results.get("estrategia_sugerida", "")
 
-    return f"""Eres un diseñador de dashboards experto. Recibirás los resultados de análisis estadísticos y debes diseñar un dashboard profesional con KPIs y gráficos.
+    return f"""Eres un Experto en Visualización de Datos y Diseño de Dashboards. Recibes datos pre-calculados por un sistema analítico y debes generar la configuración JSON de un dashboard profesional y visualmente impactante.
 
-## RESULTADOS DE ANÁLISIS
+## DATOS Y ESTRATEGIA ANALÍTICA
 
 {results_str}
 
-## ESTRATEGIA DEL PLANIFICADOR
+## ESTRATEGIA SUGERIDA POR EL ARQUITECTO
 
 {strategy}
 
-## REGLAS
+## PALETAS DE COLORES (elige UNA por gráfico)
 
-1. Genera 2-4 KPIs relevantes con valores concretos extraídos de los resultados
-2. Genera un número PAR de gráficos (2, 4, 6 o 8)
-3. Tipos de chartType: bar, line, pie, scatter
-4. Variantes: stacked, horizontal, area, doughnut, histogram
-5. Cada gráfico DEBE incluir colorPalette: array de 4-6 hex codes (#RRGGBB)
-6. Pie chart SOLO si ≤5 categorías en los datos, si no usar bar
-7. scatter chart para datos de correlación — usa campos x/y en los data items
-8. histogram variant para datos de distribución — rangos como labels (name)
-9. El resumen_ejecutivo debe ser en Markdown con 3-5 bullets de insights clave
-10. Formatos KPI: "currency", "number", "percent"
-11. trend: "up", "down" o "neutral"
-12. x_label e y_label describen los ejes del gráfico"""
+Paleta Vibrante:   ["#FF6B6B", "#4ECDC4", "#45B7D1", "#F9A826", "#A855F7", "#10B981"]
+Paleta Oceánica:   ["#0EA5E9", "#06B6D4", "#3B82F6", "#6366F1", "#8B5CF6", "#EC4899"]
+Paleta Cálida:     ["#F97316", "#EF4444", "#F59E0B", "#84CC16", "#22C55E", "#14B8A6"]
+Paleta Neón:       ["#22D3EE", "#A3E635", "#FB923C", "#F472B6", "#818CF8", "#34D399"]
+
+## CATÁLOGO DE GRÁFICOS — MAPEO EXACTO
+
+### Datos de group_by_category → Tipo de gráfico:
+- Si ≤5 categorías → chartType: "pie", variant: "doughnut" (más moderno)
+- Si 6-8 categorías → chartType: "bar", variant: null (barras verticales)
+- Si etiquetas >15 chars → chartType: "bar", variant: "horizontal"
+
+### Datos de time_series_trend → Tipo de gráfico:
+- Si >8 puntos → chartType: "line", variant: "area" (relleno bajo la línea)
+- Si ≤8 puntos → chartType: "line", variant: null
+
+### Datos de cross_tabulation → Tipo de gráfico:
+- SIEMPRE → chartType: "bar", variant: "stacked"
+- Usa el campo `series` (no `data`)
+
+### Datos de distribution_bins → Tipo de gráfico:
+- SIEMPRE → chartType: "bar", variant: "histogram"
+- x_label: nombre del rango, y_label: "Cantidad"
+
+### Datos de correlation_check → Tipo de gráfico:
+- SIEMPRE → chartType: "scatter", variant: null
+- Usa campos x/y en los data items
+
+### Datos de find_top_bottom_records → Tipo de gráfico:
+- Usar solo el array `top` → chartType: "bar", variant: "horizontal"
+- Título: "Top N [entidad] por [métrica]"
+
+## REGLAS DE KPIs
+
+- Genera entre 2 y 4 KPIs
+- Cada KPI usa una métrica diferente
+- Si tienes period_over_period_growth → usa ese valor para trend y trendValue
+- format: "currency" si parece dinero, "number" para conteos, "percent" para porcentajes
+- NO incluir prefix "$" en currency (el frontend lo agrega)
+- trend: "up" | "down" | "neutral" — SOLO si tienes datos reales de crecimiento
+- trendValue: "+12.3%" o "-5.1%" — SOLO si tienes el % calculado
+
+## REGLAS DE INSIGHTS (resumen_ejecutivo)
+
+El resumen_ejecutivo debe ser Markdown con 4-6 bullets accionables.
+
+MALO ❌: "Las ventas son altas en Lima"
+BUENO ✅: "🔥 Lima lidera con $45,200 representando el 42% del total — concentrar esfuerzos de marketing aquí"
+
+MALO ❌: "Hay correlación entre cantidad y precio"
+BUENO ✅: "📊 Correlación cantidad-ventas de 0.72 (alta) — a mayor volumen de unidades, mayor ingreso de forma consistente"
+
+MALO ❌: "El mes de enero fue bueno"
+BUENO ✅: "📈 Enero fue el pico con $72,000 (+23% vs diciembre) — investigar qué impulsó ese crecimiento"
+
+Estructura recomendada del resumen:
+- 1-2 bullets de hallazgos positivos (🔥 🏆 📈)
+- 1-2 bullets de oportunidades o advertencias (⚠️ 📉 💡)
+- 1 bullet de correlación o patrón interesante (📊)
+
+## REGLAS DE DISEÑO
+
+- El número total de `graficos` DEBE ser par (2, 4 o 6) — obligatorio para el layout
+- NUNCA inventar valores — usar SOLO los numbers de los resultados analíticos
+- Todo gráfico de tipo bar, pie o scatter DEBE tener colorPalette con 4-6 hex codes
+- Los gráficos de línea/área NO necesitan colorPalette (el frontend usa el color del tema)
+- x_label e y_label son obligatorios cuando el tipo de eje no es obvio
+- Títulos de gráficos: concisos, informativos, sin "Gráfico de" al inicio
+
+## EJEMPLOS FEW-SHOT
+
+### Ejemplo — KPI con trend real
+Datos recibidos: period_over_period_growth retornó valor_actual=85000, valor_anterior=70000, pct_cambio=21.4
+
+KPI correcto:
+{{
+  "id": "k1",
+  "label": "Ventas del Período",
+  "value": 85000,
+  "format": "currency",
+  "trend": "up",
+  "trendValue": "+21.4%"
+}}
+
+KPI incorrecto ❌:
+{{
+  "id": "k1",
+  "label": "Ventas",
+  "value": 85000,
+  "format": "currency",
+  "trend": "up",
+  "trendValue": "+12%"   ← valor inventado, diferente al calculado
+}}
+
+### Ejemplo — Donut chart correcto
+Datos recibidos: group_by_category retornó [Lima:9200, Cusco:4800, Arequipa:3100] (3 categorías → usar donut)
+
+Gráfico correcto:
+{{
+  "id": "g1",
+  "chartType": "pie",
+  "variant": "doughnut",
+  "title": "Ventas por Región",
+  "x_label": null,
+  "y_label": null,
+  "data": [
+    {{"name": "Lima", "value": 9200, "x": null, "y": null}},
+    {{"name": "Cusco", "value": 4800, "x": null, "y": null}},
+    {{"name": "Arequipa", "value": 3100, "x": null, "y": null}}
+  ],
+  "series": null,
+  "colorPalette": ["#FF6B6B", "#4ECDC4", "#45B7D1"]
+}}
+
+### Ejemplo — Stacked bar correcto
+Datos recibidos: cross_tabulation retornó categorías:[Tech,Ventas,RRHH], series:[{{Senior:[40,25,10]}}, {{Junior:[15,30,20]}}]
+
+Gráfico correcto:
+{{
+  "id": "g2",
+  "chartType": "bar",
+  "variant": "stacked",
+  "title": "Empleados por Departamento y Nivel",
+  "x_label": "Departamento",
+  "y_label": "Cantidad",
+  "data": null,
+  "series": [
+    {{"name": "Senior", "data": [{{"name":"Tech","value":40,"x":null,"y":null}},{{"name":"Ventas","value":25,"x":null,"y":null}},{{"name":"RRHH","value":10,"x":null,"y":null}}]}},
+    {{"name": "Junior", "data": [{{"name":"Tech","value":15,"x":null,"y":null}},{{"name":"Ventas","value":30,"x":null,"y":null}},{{"name":"RRHH","value":20,"x":null,"y":null}}]}}
+  ],
+  "colorPalette": ["#4ECDC4", "#FF6B6B"]
+}}
+
+### Ejemplo — Scatter chart correcto
+Datos recibidos: correlation_check retornó pearson_r=0.72, scatter_points=[{{x:1,y:100}},...]
+
+Gráfico correcto:
+{{
+  "id": "g3",
+  "chartType": "scatter",
+  "variant": null,
+  "title": "Correlación Cantidad vs Ventas (r=0.72)",
+  "x_label": "Cantidad",
+  "y_label": "Total Venta",
+  "data": [
+    {{"name": "p1", "value": 0, "x": 1, "y": 100}},
+    {{"name": "p2", "value": 0, "x": 3, "y": 280}}
+  ],
+  "series": null,
+  "colorPalette": ["#4ECDC4"]
+}}"""
 
 
 # ── Step 1: Planificador ──────────────────────────────────────────────
