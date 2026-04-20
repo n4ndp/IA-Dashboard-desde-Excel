@@ -62,8 +62,8 @@ export interface UploadResponse {
 
 export type DashboardState = 'empty' | 'loading' | 'error' | 'generated'
 export type WidgetType = 'kpi' | 'chart' | 'insight'
-export type ChartType = 'bar' | 'line' | 'pie'
-export type ChartVariant = 'stacked' | 'grouped' | 'horizontal' | 'multi' | 'area' | 'doughnut'
+export type ChartType = 'bar' | 'line' | 'pie' | 'scatter'
+export type ChartVariant = 'stacked' | 'grouped' | 'horizontal' | 'multi' | 'area' | 'doughnut' | 'histogram'
 export type ValueFormat = 'currency' | 'number' | 'percent'
 export type TrendDirection = 'up' | 'down' | 'neutral'
 export type InsightSeverity = 'positive' | 'negative' | 'warning' | 'info'
@@ -73,6 +73,8 @@ export type InsightSeverity = 'positive' | 'negative' | 'warning' | 'info'
 export interface ChartDataItem {
   name: string
   value: number
+  x?: number
+  y?: number
 }
 
 export interface SeriesData {
@@ -102,10 +104,13 @@ export interface ChartWidgetData {
   title: string
   x?: string
   y?: string
+  x_label?: string
+  y_label?: string
   data?: ChartDataItem[]
   series?: SeriesData[]
   orientation?: string
   areaStyle?: Record<string, unknown>
+  colorPalette?: string[]
 }
 
 export interface InsightWidgetData {
@@ -121,4 +126,5 @@ export type DashboardWidgetMap = ChartWidgetData | KpiWidgetData | InsightWidget
 export interface DashboardConfig {
   widgets: DashboardWidgetMap[]
   generated_at?: string
+  resumen_ejecutivo?: string
 }

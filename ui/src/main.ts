@@ -9,7 +9,7 @@ import router from './router'
 // ── ECharts tree-shaking setup ──
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, LineChart, PieChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -22,6 +22,7 @@ use([
   BarChart,
   LineChart,
   PieChart,
+  ScatterChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

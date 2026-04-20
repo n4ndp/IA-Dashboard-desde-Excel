@@ -141,6 +141,9 @@ class ChartWidgetSchema(BaseModel):
     series: list[dict[str, Any]] | None = None
     orientation: str | None = None
     areaStyle: dict[str, Any] | None = None
+    colorPalette: list[str] = []
+    x_label: str | None = None
+    y_label: str | None = None
 
 
 class InsightWidgetSchema(BaseModel):
@@ -156,6 +159,7 @@ class GenerateDashboardResponse(BaseModel):
     """Response for POST /generate-dashboard."""
     widgets: list[dict[str, Any]]
     generated_at: datetime
+    resumen_ejecutivo: str | None = None
 
 
 class ProjectDetail(BaseModel):

@@ -86,6 +86,46 @@ class AnalyticsEngine:
             return pd.DataFrame()
         return pd.DataFrame([r["data"] for r in rows if r["data"] is not None])
 
+    def _resolve_table(self, table_name: str) -> tuple[int, list[dict]]:
+        """Resolve a table name (nombre_hoja) to its ID and column metadata.
+
+        Args:
+            table_name: The nombre_hoja of the table.
+
+        Returns:
+            Tuple of (tabla_id, list of {"nombre": str, "tipo": str} dicts).
+
+        Raises:
+            ValueError: If table not found in this project.
+        """
+        tabla = (
+            self.db.query(Tabla)
+            .filter(
+                Tabla.nombre_hoja == table_name,
+                Tabla.proyecto_id == self.project_id,
+            )
+            .first()
+        )
+        if tabla is None:
+            raise ValueError(f"Table '{table_name}' not found in project")
+
+        columns = (
+            self.db.query(Columna)
+            .filter(Columna.tabla_id == tabla.id)
+            .all()
+        )
+        column_meta = [{"nombre": c.nombre, "tipo": c.tipo} for c in columns]
+        return tabla.id, column_meta
+
+    def _parse_dates(self, df: pd.DataFrame, col_name: str, col_type: str | None = None) -> pd.Series:
+        """Parse a DataFrame column to datetime when its type is 'date'.
+
+        Returns the original series unchanged for non-date columns.
+        """
+        if col_type == "date" and col_name in df.columns:
+            return pd.to_datetime(df[col_name], errors="coerce")
+        return df[col_name]
+
     # ── Tool dispatch ─────────────────────────────────────────────────
 
     def execute_tool(self, tool_name: str, args: dict) -> dict:
@@ -616,3 +656,444 @@ class AnalyticsEngine:
             "columns": columns,
             "row_count": len(merged),
         }
+
+    # ── Analytical Functions (Pipeline Step 2) ─────────────────────────
+    # These methods accept `table` as a string (nombre_hoja) and are
+    # dispatched by the 3-step pipeline's middleware (ai_service.execute_plan).
+    # All return serialisable dicts/lists — never raise on empty data.
+
+    def get_column_summary(self, table: str, column: str) -> dict:
+        """Return min, max, nulls, uniques, and top-3 values for a column."""
+        tabla_id, columns = self._resolve_table(table)
+        col_meta = {c["nombre"]: c["tipo"] for c in columns}
+        col_type = col_meta.get(column)
+
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or column not in df.columns:
+            return {"min": None, "max": None, "nulls": 0, "uniques": 0, "top3": []}
+
+        col_data = df[column]
+        nulls = int(col_data.isna().sum())
+        uniques = int(col_data.nunique())
+
+        min_val: float | None = None
+        max_val: float | None = None
+        if col_type == "number":
+            numeric = pd.to_numeric(col_data, errors="coerce")
+            if not numeric.isna().all():
+                min_val = float(numeric.min())
+                max_val = float(numeric.max())
+
+        top3_series = col_data.value_counts().head(3)
+        top3 = [{"value": str(v), "count": int(c)} for v, c in top3_series.items()]
+
+        return {"min": min_val, "max": max_val, "nulls": nulls, "uniques": uniques, "top3": top3}
+
+    def calculate_kpi(
+        self,
+        table: str,
+        agg_col: str,
+        operation: str,
+        filter_col: str | None = None,
+        filter_val: str | None = None,
+    ) -> dict:
+        """Compute a single aggregated value, optionally filtered."""
+        tabla_id, columns = self._resolve_table(table)
+        col_meta = {c["nombre"]: c["tipo"] for c in columns}
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty:
+            return {"value": 0}
+
+        # Apply optional filter
+        if filter_col and filter_val is not None and filter_col in df.columns:
+            filter_type = col_meta.get(filter_col, "string")
+            if filter_type == "number":
+                try:
+                    num_val = float(filter_val)
+                    mask = pd.to_numeric(df[filter_col], errors="coerce") == num_val
+                    df = df[mask]
+                except (ValueError, TypeError):
+                    df = df[df[filter_col].astype(str) == str(filter_val)]
+            else:
+                df = df[df[filter_col].astype(str) == str(filter_val)]
+
+        if df.empty or agg_col not in df.columns:
+            return {"value": 0}
+
+        col = pd.to_numeric(df[agg_col], errors="coerce")
+        if col.isna().all():
+            return {"value": 0}
+
+        op = operation.upper()
+        if op == "SUM":
+            return {"value": float(col.sum())}
+        if op == "AVG":
+            return {"value": float(col.mean())}
+        if op == "MAX":
+            return {"value": float(col.max())}
+        if op == "MIN":
+            return {"value": float(col.min())}
+        if op == "COUNT":
+            return {"value": int(col.notna().sum())}
+        return {"error": f"Invalid operation '{operation}'"}
+
+    def period_over_period_growth(
+        self,
+        table: str,
+        date_col: str,
+        agg_col: str,
+        operation: str = "SUM",
+        interval: str = "month",
+    ) -> dict:
+        """Compare the latest period vs the previous period."""
+        tabla_id, columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or date_col not in df.columns or agg_col not in df.columns:
+            return {"current": 0, "previous": 0, "change_pct": 0}
+
+        df = df.copy()
+        df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.dropna(subset=["_date"])
+        if df.empty:
+            return {"current": 0, "previous": 0, "change_pct": 0}
+
+        freq_map = {"month": "M", "quarter": "Q", "year": "Y"}
+        freq = freq_map.get(interval, "M")
+        df["_period"] = df["_date"].dt.to_period(freq)
+        df["_agg"] = pd.to_numeric(df[agg_col], errors="coerce")
+
+        periods = sorted(df["_period"].unique())
+        if not periods:
+            return {"current": 0, "previous": 0, "change_pct": 0}
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        def _apply(series: pd.Series) -> float:
+            if series.empty or series.isna().all():
+                return 0
+            if op == "count":
+                return float(series.notna().sum())
+            return float(series.agg(op))
+
+        current_period = periods[-1]
+        current_val = _apply(df[df["_period"] == current_period]["_agg"])
+
+        previous_val = 0.0
+        if len(periods) >= 2:
+            previous_period = periods[-2]
+            previous_val = _apply(df[df["_period"] == previous_period]["_agg"])
+
+        if previous_val != 0:
+            change_pct = round(((current_val - previous_val) / abs(previous_val)) * 100, 2)
+        else:
+            change_pct = 0.0
+
+        return {"current": current_val, "previous": previous_val, "change_pct": change_pct}
+
+    def group_by_category(
+        self,
+        table: str,
+        group_col: str,
+        agg_col: str,
+        operation: str = "SUM",
+        limit: int = 10,
+    ) -> list:
+        """Group by a categorical column and aggregate a numeric column."""
+        limit = int(limit)
+        tabla_id, _columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or group_col not in df.columns or agg_col not in df.columns:
+            return []
+
+        df = df.copy()
+        df["_agg"] = pd.to_numeric(df[agg_col], errors="coerce")
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        try:
+            grouped = df.groupby(group_col)["_agg"].agg(op).reset_index()
+        except Exception:
+            return []
+
+        grouped.columns = ["name", "value"]
+        grouped["name"] = grouped["name"].astype(str)
+        grouped = grouped.sort_values("value", ascending=False).head(limit)
+
+        result = []
+        for _, row in grouped.iterrows():
+            val = row["value"]
+            result.append({
+                "name": str(row["name"]),
+                "value": float(val) if val is not None and not pd.isna(val) else 0,
+            })
+        return result
+
+    def time_series_trend(
+        self,
+        table: str,
+        date_col: str,
+        agg_col: str,
+        operation: str = "SUM",
+        interval: str = "month",
+    ) -> list:
+        """Return chronological data points bucketed by time period."""
+        tabla_id, columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or date_col not in df.columns or agg_col not in df.columns:
+            return []
+
+        df = df.copy()
+        df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.dropna(subset=["_date"])
+        if df.empty:
+            return []
+
+        freq_map = {"month": "M", "quarter": "Q", "year": "Y", "week": "W"}
+        freq = freq_map.get(interval, "M")
+        df["_period"] = df["_date"].dt.to_period(freq)
+        df["_agg"] = pd.to_numeric(df[agg_col], errors="coerce")
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        try:
+            grouped = df.groupby("_period")["_agg"].agg(op).reset_index()
+        except Exception:
+            return []
+
+        grouped.columns = ["period", "value"]
+        grouped = grouped.sort_values("period")
+
+        result = []
+        for _, row in grouped.iterrows():
+            val = row["value"]
+            result.append({
+                "period": str(row["period"]),
+                "value": float(val) if val is not None and not pd.isna(val) else 0,
+            })
+        return result
+
+    def cross_tabulation(
+        self,
+        table: str,
+        group_col_1: str,
+        group_col_2: str,
+        agg_col: str,
+        operation: str = "SUM",
+        limit: int = 5,
+    ) -> dict:
+        """Two-dimensional pivot: categories × series with aggregation."""
+        limit = int(limit)
+        tabla_id, _columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty:
+            return {"categories": [], "series": []}
+
+        for col in [group_col_1, group_col_2, agg_col]:
+            if col not in df.columns:
+                return {"categories": [], "series": []}
+
+        df = df.copy()
+        df["_agg"] = pd.to_numeric(df[agg_col], errors="coerce")
+
+        top_g1 = df[group_col_1].value_counts().head(limit).index.tolist()
+        top_g2 = df[group_col_2].value_counts().head(limit).index.tolist()
+        df_filtered = df[df[group_col_1].isin(top_g1)]
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        categories = [str(c) for c in top_g2]
+        series_list = []
+
+        for cat in top_g1:
+            cat_df = df_filtered[df_filtered[group_col_1] == cat]
+            data = []
+            for s in top_g2:
+                subset = cat_df[cat_df[group_col_2] == s]["_agg"]
+                if subset.empty or subset.isna().all():
+                    data.append(0)
+                else:
+                    if op == "count":
+                        data.append(int(subset.notna().sum()))
+                    else:
+                        data.append(float(subset.agg(op)))
+            series_list.append({"name": str(cat), "data": data})
+
+        return {"categories": categories, "series": series_list}
+
+    def distribution_bins(
+        self,
+        table: str,
+        numeric_col: str,
+        bins: int = 5,
+    ) -> list:
+        """Bucket a numeric column into equal-width ranges."""
+        bins = int(bins)
+        bins = max(2, min(bins, 20))
+
+        tabla_id, _columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or numeric_col not in df.columns:
+            return []
+
+        col = pd.to_numeric(df[numeric_col], errors="coerce").dropna()
+        if col.empty:
+            return []
+
+        if col.nunique() <= 1:
+            return [{"range": f"{col.min()} - {col.max()}", "count": len(col)}]
+
+        try:
+            binned = pd.cut(col, bins=bins, include_lowest=True)
+            counts = binned.value_counts().sort_index()
+        except Exception:
+            return []
+
+        result = []
+        for interval_range, count in counts.items():
+            result.append({
+                "range": f"{round(interval_range.left, 2)} - {round(interval_range.right, 2)}",
+                "count": int(count),
+            })
+        return result
+
+    def find_top_bottom_records(
+        self,
+        table: str,
+        entity_col: str,
+        agg_col: str,
+        operation: str = "SUM",
+        n: int = 3,
+    ) -> dict:
+        """Top-N and Bottom-N entities by aggregated value."""
+        n = int(n)
+        n = max(1, min(n, 20))
+
+        tabla_id, _columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty or entity_col not in df.columns or agg_col not in df.columns:
+            return {"top": [], "bottom": []}
+
+        df = df.copy()
+        df["_agg"] = pd.to_numeric(df[agg_col], errors="coerce")
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        try:
+            grouped = df.groupby(entity_col)["_agg"].agg(op).reset_index()
+        except Exception:
+            return {"top": [], "bottom": []}
+
+        grouped.columns = ["name", "value"]
+        grouped["name"] = grouped["name"].astype(str)
+        grouped = grouped.dropna(subset=["value"])
+
+        top_df = grouped.nlargest(n, "value")
+        bottom_df = grouped.nsmallest(n, "value")
+
+        top = [{"name": str(r["name"]), "value": float(r["value"])} for _, r in top_df.iterrows()]
+        bottom = [{"name": str(r["name"]), "value": float(r["value"])} for _, r in bottom_df.iterrows()]
+
+        return {"top": top, "bottom": bottom}
+
+    def correlation_check(
+        self,
+        table: str,
+        num_col_1: str,
+        num_col_2: str,
+    ) -> dict:
+        """Pearson correlation between two numeric columns + sample scatter points."""
+        tabla_id, _columns = self._resolve_table(table)
+        df = self._load_table_as_dataframe(tabla_id)
+        if df.empty:
+            return {"correlation": 0, "col1": num_col_1, "col2": num_col_2, "sample_points": []}
+
+        if num_col_1 not in df.columns or num_col_2 not in df.columns:
+            return {"error": f"Column not found in table '{table}'"}
+
+        col1 = pd.to_numeric(df[num_col_1], errors="coerce")
+        col2 = pd.to_numeric(df[num_col_2], errors="coerce")
+        valid = pd.DataFrame({"col1": col1, "col2": col2}).dropna()
+
+        if len(valid) < 2:
+            return {"correlation": 0, "col1": num_col_1, "col2": num_col_2, "sample_points": []}
+
+        corr = float(valid["col1"].corr(valid["col2"]))
+
+        sample = valid.head(50)
+        points = [{"x": float(r["col1"]), "y": float(r["col2"])} for _, r in sample.iterrows()]
+
+        return {
+            "correlation": round(corr, 4),
+            "col1": num_col_1,
+            "col2": num_col_2,
+            "sample_points": points,
+        }
+
+    def join_and_aggregate(
+        self,
+        table1: str,
+        table2: str,
+        join_col1: str,
+        join_col2: str,
+        group_col: str,
+        agg_col: str,
+        operation: str = "SUM",
+        limit: int = 10,
+    ) -> list:
+        """Join two tables and aggregate the result."""
+        limit = int(limit)
+        tabla_id_1, _ = self._resolve_table(table1)
+        tabla_id_2, _ = self._resolve_table(table2)
+
+        df1 = self._load_table_as_dataframe(tabla_id_1)
+        df2 = self._load_table_as_dataframe(tabla_id_2)
+
+        if df1.empty or df2.empty:
+            return []
+        if join_col1 not in df1.columns or join_col2 not in df2.columns:
+            return []
+
+        try:
+            merged = pd.merge(df1, df2, left_on=join_col1, right_on=join_col2, how="inner")
+        except Exception:
+            return []
+
+        if merged.empty:
+            return []
+        if group_col not in merged.columns or agg_col not in merged.columns:
+            return []
+
+        merged = merged.copy()
+        merged["_agg"] = pd.to_numeric(merged[agg_col], errors="coerce")
+
+        op = operation.lower()
+        if op == "avg":
+            op = "mean"
+
+        try:
+            grouped = merged.groupby(group_col)["_agg"].agg(op).reset_index()
+        except Exception:
+            return []
+
+        grouped.columns = ["name", "value"]
+        grouped["name"] = grouped["name"].astype(str)
+        grouped = grouped.sort_values("value", ascending=False).head(limit)
+
+        result = []
+        for _, row in grouped.iterrows():
+            val = row["value"]
+            result.append({
+                "name": str(row["name"]),
+                "value": float(val) if val is not None and not pd.isna(val) else 0,
+            })
+        return result

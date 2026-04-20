@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // ── ChartWidget ──
-// ECharts wrapper supporting bar, line, and pie chart types.
-// Supports 6 variants: stacked, grouped, horizontal, multi, area, doughnut.
+// ECharts wrapper supporting bar, line, pie, and scatter chart types.
+// Supports 7 variants: stacked, grouped, horizontal, multi, area, doughnut, histogram.
+// Handles colorPalette from widget data (falls back to SERIES_COLORS).
 // Handles both simple data[] and series[] formats.
 
 import { computed } from 'vue'
@@ -12,8 +13,13 @@ const props = defineProps<{
   widget: ChartWidgetData
 }>()
 
-// Color palette for multi-series charts
+// Color palette for multi-series charts (fallback when widget has no colorPalette)
 const SERIES_COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7']
+
+/** Resolve effective color array: widget.colorPalette or fallback SERIES_COLORS */
+function resolveColors(): string[] {
+  return props.widget.colorPalette?.length ? props.widget.colorPalette : SERIES_COLORS
+}
 
 /** Convert ChartDataItem[] to ECharts data format */
 function toEchartsItems(data: ChartDataItem[]) {
@@ -35,6 +41,7 @@ function getCategories(): string[] {
 
 const chartOption = computed(() => {
   const { widget } = props
+  const colors = resolveColors()
   const baseTextStyle = { color: '#a1a1aa' }
   const baseAxisLine = { lineStyle: { color: '#333' } }
   const baseSplitLine = { lineStyle: { color: '#222' } }
@@ -46,6 +53,7 @@ const chartOption = computed(() => {
     const isDoughnut = variant === 'doughnut'
 
     return {
+      color: colors,
       textStyle: baseTextStyle,
       tooltip: { trigger: 'item', confine: true },
       legend: {
@@ -71,6 +79,85 @@ const chartOption = computed(() => {
     }
   }
 
+  // ── Scatter ──
+  if (widget.chartType === 'scatter') {
+    const scatterData = (widget.data || [])
+      .filter((item) => item.x != null && item.y != null)
+      .map((item) => [item.x, item.y])
+
+    return {
+      color: colors,
+      textStyle: baseTextStyle,
+      tooltip: {
+        trigger: 'item',
+        confine: true,
+        formatter: (params: { data: number[] }) => {
+          return `${widget.x_label || 'X'}: ${params.data[0]}<br/>${widget.y_label || 'Y'}: ${params.data[1]}`
+        },
+      },
+      grid: { left: 50, right: 16, top: 16, bottom: 32 },
+      xAxis: {
+        type: 'value' as const,
+        axisLine: { show: false },
+        splitLine: baseSplitLine,
+        axisLabel: { color: '#71717a', fontSize: 11 },
+        name: widget.x_label || '',
+        nameTextStyle: { color: '#71717a', fontSize: 11 },
+      },
+      yAxis: {
+        type: 'value' as const,
+        axisLine: { show: false },
+        splitLine: baseSplitLine,
+        axisLabel: { color: '#71717a', fontSize: 11 },
+        name: widget.y_label || '',
+        nameTextStyle: { color: '#71717a', fontSize: 11 },
+      },
+      series: [
+        {
+          type: 'scatter',
+          data: scatterData,
+          symbolSize: 8,
+        },
+      ],
+    }
+  }
+
+  // ── Histogram (bar chart with range labels) ──
+  if (variant === 'histogram') {
+    const categories = getCategories()
+    const dataValues = widget.data ? widget.data.map((item) => item.value) : []
+
+    return {
+      color: colors,
+      textStyle: baseTextStyle,
+      tooltip: { trigger: 'axis', confine: true },
+      grid: { left: 50, right: 16, top: 16, bottom: 32 },
+      xAxis: {
+        type: 'category' as const,
+        data: categories,
+        axisLine: baseAxisLine,
+        axisLabel: { color: '#71717a', fontSize: 10, rotate: 20 },
+        name: widget.x_label || '',
+        nameTextStyle: { color: '#71717a', fontSize: 11 },
+      },
+      yAxis: {
+        type: 'value' as const,
+        axisLine: { show: false },
+        splitLine: baseSplitLine,
+        axisLabel: { color: '#71717a', fontSize: 11 },
+        name: widget.y_label || 'Count',
+        nameTextStyle: { color: '#71717a', fontSize: 11 },
+      },
+      series: [
+        {
+          type: 'bar',
+          data: dataValues,
+          barWidth: '90%',
+        },
+      ],
+    }
+  }
+
   // ── Bar / Line with variants ──
   const categories = getCategories()
   const isHorizontal = variant === 'horizontal' || widget.orientation === 'horizontal'
@@ -88,12 +175,12 @@ const chartOption = computed(() => {
         type: widget.chartType,
         data: s.data.map((item) => item.value),
         smooth: widget.chartType === 'line',
-        itemStyle: { color: SERIES_COLORS[idx % SERIES_COLORS.length] },
+        itemStyle: { color: colors[idx % colors.length] },
       }
 
       if (widget.chartType === 'line') {
         seriesEntry.lineStyle = {
-          color: SERIES_COLORS[idx % SERIES_COLORS.length],
+          color: colors[idx % colors.length],
           width: 2,
         }
         if (isArea) {
@@ -116,10 +203,10 @@ const chartOption = computed(() => {
     }
 
     if (widget.chartType === 'bar') {
-      seriesEntry.itemStyle = { color: '#6366f1' }
+      seriesEntry.itemStyle = { color: colors[0] }
     }
     if (widget.chartType === 'line') {
-      seriesEntry.lineStyle = { color: '#6366f1', width: 2 }
+      seriesEntry.lineStyle = { color: colors[0], width: 2 }
       if (isArea) {
         seriesEntry.areaStyle = { opacity: 0.15 }
       }
@@ -143,6 +230,7 @@ const chartOption = computed(() => {
   }
 
   return {
+    color: colors,
     textStyle: baseTextStyle,
     tooltip: { trigger: 'axis', confine: true },
     legend: seriesList.length > 1 ? {

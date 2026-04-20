@@ -85,6 +85,11 @@ def generate_dashboard_endpoint(
             status_code=500,
             detail=f"Dashboard generation failed: {exc}",
         )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dashboard generation failed: {exc}",
+        )
 
     # 6. Save to project
     proyecto.dashboard_config = config
@@ -94,4 +99,5 @@ def generate_dashboard_endpoint(
     return GenerateDashboardResponse(
         widgets=config.get("widgets", []),
         generated_at=config.get("generated_at"),
+        resumen_ejecutivo=config.get("resumen_ejecutivo"),
     )

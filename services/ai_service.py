@@ -1,30 +1,23 @@
-"""AI dashboard generation service.
+"""AI dashboard generation service — 3-step deterministic pipeline.
 
-Implements the OpenAI agent loop that:
-  1. Builds a system prompt with dynamic table metadata
-  2. Registers 9 analytics tools as OpenAI function calling tools
-  3. Runs an agent loop (max 15 iterations, 10 tool calls, 60s timeout)
-  4. Validates the output JSON against widget schemas
-  5. Returns a DashboardConfig dict
+Step 1 (Planificador): IA call → execution plan with Structured Outputs.
+Step 2 (Middleware):  Pure Python dispatch to 10 analytical functions.
+Step 3 (Diseñador):   IA call → final dashboard JSON with Structured Outputs.
+
+Both AI calls use gpt-4o-mini with ``response_format: {type: "json_schema"}``.
+No iteration loop — bounded to exactly 2 API calls, zero recursion risk.
 """
 
+import inspect
 import json
 import os
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
-from schemas import KpiWidgetSchema, ChartWidgetSchema, InsightWidgetSchema
 from services.analytics_service import AnalyticsEngine
-
-# ── Constants ─────────────────────────────────────────────────────────
-
-MAX_ITERATIONS = 15
-MAX_TOOL_CALLS = 10
-TIMEOUT_SECONDS = 60
 
 # ── OpenAI client (lazy init) ─────────────────────────────────────────
 
@@ -42,251 +35,143 @@ def _get_client() -> OpenAI:
     return _client
 
 
-# ── Tool definitions (OpenAI function calling format) ─────────────────
+# ── JSON Schemas for Structured Outputs ────────────────────────────────
 
-TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_columns",
-            "description": "Obtiene las columnas de una tabla con sus nombres y tipos (string, number, date)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla. Puede ser un entero (tabla real) o un string como 'v_1' (tabla virtual de un join)",
+PLAN_SCHEMA = {
+    "name": "execution_plan",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "ejecutar": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "function_name": {"type": "string"},
+                        "parametros": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                            "additionalProperties": {"type": "string"},
+                        },
+                        "justificacion": {"type": "string"},
                     },
+                    "required": ["function_name", "parametros", "justificacion"],
+                    "additionalProperties": False,
                 },
-                "required": ["table_id"],
+            },
+            "message": {"type": "string"},
+        },
+        "required": ["ejecutar", "message"],
+        "additionalProperties": False,
+    },
+}
+
+DESIGNER_SCHEMA = {
+    "name": "dashboard_design",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "resumen_ejecutivo": {"type": "string"},
+            "kpis": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "label": {"type": "string"},
+                        "value": {"type": "number"},
+                        "format": {"type": "string"},
+                        "trend": {"type": ["string", "null"]},
+                        "trendValue": {"type": ["string", "null"]},
+                    },
+                    "required": ["id", "label", "value", "format", "trend", "trendValue"],
+                    "additionalProperties": False,
+                },
+            },
+            "graficos": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "chartType": {"type": "string"},
+                        "variant": {"type": ["string", "null"]},
+                        "title": {"type": "string"},
+                        "data": {
+                            "type": ["array", "null"],
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "value": {"type": "number"},
+                                    "x": {"type": ["number", "null"]},
+                                    "y": {"type": ["number", "null"]},
+                                },
+                                "required": ["name", "value", "x", "y"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "series": {
+                            "type": ["array", "null"],
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "data": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "value": {"type": "number"},
+                                                "x": {"type": ["number", "null"]},
+                                                "y": {"type": ["number", "null"]},
+                                            },
+                                            "required": ["name", "value", "x", "y"],
+                                            "additionalProperties": False,
+                                        },
+                                    },
+                                },
+                                "required": ["name", "data"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "colorPalette": {
+                            "type": ["array", "null"],
+                            "items": {"type": "string"},
+                        },
+                        "x_label": {"type": ["string", "null"]},
+                        "y_label": {"type": ["string", "null"]},
+                    },
+                    "required": [
+                        "id", "chartType", "variant", "title",
+                        "data", "series", "colorPalette", "x_label", "y_label",
+                    ],
+                    "additionalProperties": False,
+                },
             },
         },
+        "required": ["resumen_ejecutivo", "kpis", "graficos"],
+        "additionalProperties": False,
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_sample",
-            "description": "Obtiene una muestra de filas de una tabla para entender los datos",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Cantidad de filas a retornar (default: 50, max: 200)",
-                        "default": 50,
-                    },
-                },
-                "required": ["table_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "count_rows",
-            "description": "Cuenta el total de filas en una tabla",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                },
-                "required": ["table_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "aggregate",
-            "description": "Calcula una agregación (SUM, AVG, MAX, MIN, COUNT) sobre una columna numérica",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "column": {
-                        "type": "string",
-                        "description": "Nombre de la columna numérica",
-                    },
-                    "operation": {
-                        "type": "string",
-                        "enum": ["SUM", "AVG", "MAX", "MIN", "COUNT"],
-                        "description": "Operación de agregación",
-                    },
-                },
-                "required": ["table_id", "column", "operation"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "group_by",
-            "description": "Agrupa filas por una columna categórica y calcula una agregación sobre una columna numérica. Retorna los grupos ordenados por valor descendente.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "group_column": {
-                        "type": "string",
-                        "description": "Columna categórica para agrupar",
-                    },
-                    "agg_column": {
-                        "type": "string",
-                        "description": "Columna numérica para agregar",
-                    },
-                    "operation": {
-                        "type": "string",
-                        "enum": ["SUM", "AVG", "MAX", "MIN", "COUNT"],
-                        "description": "Operación de agregación",
-                    },
-                },
-                "required": ["table_id", "group_column", "agg_column", "operation"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "filter",
-            "description": "Filtra filas de una tabla por una condición sobre una columna",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "column": {
-                        "type": "string",
-                        "description": "Columna a filtrar",
-                    },
-                    "operator": {
-                        "type": "string",
-                        "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "starts_with"],
-                        "description": "Operador de comparación",
-                    },
-                    "value": {
-                        "description": "Valor a comparar",
-                    },
-                },
-                "required": ["table_id", "column", "operator", "value"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "distinct_values",
-            "description": "Obtiene valores únicos de una columna y su frecuencia, ordenados por frecuencia descendente",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "column": {
-                        "type": "string",
-                        "description": "Nombre de la columna",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Máximo de valores a retornar (default: 20)",
-                        "default": 20,
-                    },
-                },
-                "required": ["table_id", "column"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "date_range",
-            "description": "Obtiene la fecha mínima, máxima y el rango en días de una columna tipo date",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla (real o virtual)",
-                    },
-                    "column": {
-                        "type": "string",
-                        "description": "Nombre de la columna tipo date",
-                    },
-                },
-                "required": ["table_id", "column"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "join_tables",
-            "description": "Junta dos tablas por una columna en común, generando una tabla virtual temporal. Las tools posteriores pueden usar el virtual_table_id retornado.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "left_table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla izquierda",
-                    },
-                    "right_table_id": {
-                        "type": ["integer", "string"],
-                        "description": "ID de la tabla derecha",
-                    },
-                    "left_column": {
-                        "type": "string",
-                        "description": "Columna de la tabla izquierda para el join",
-                    },
-                    "right_column": {
-                        "type": "string",
-                        "description": "Columna de la tabla derecha para el join",
-                    },
-                    "join_type": {
-                        "type": "string",
-                        "enum": ["inner", "left", "right"],
-                        "description": "Tipo de join (default: inner)",
-                        "default": "inner",
-                    },
-                },
-                "required": ["left_table_id", "right_table_id", "left_column", "right_column"],
-            },
-        },
-    },
-]
+}
 
 
-# ── System prompt builder ─────────────────────────────────────────────
+# ── Prompt builders ────────────────────────────────────────────────────
 
-def _build_system_prompt(tables_context: list[dict]) -> str:
-    """Build the system prompt with dynamic table metadata.
 
-    Args:
-        tables_context: List of table summary dicts with id, sheet_name, columns, rows, row_count.
-    """
-    # Build table summaries for injection
+def _build_plan_prompt(tables_context: list[dict]) -> str:
+    """Build the Planificador system prompt with table metadata."""
     table_descriptions = []
     for t in tables_context:
         cols = ", ".join(f"{c['name']}({c['type']})" for c in t.get("columns", []))
         sample_lines = []
         for row in t.get("rows", [])[:5]:
             sample_lines.append("    " + json.dumps(row, ensure_ascii=False, default=str))
-        sample_str = "\n".join(sample_lines) if sample_lines else "    (no data)"
+        sample_str = "\n".join(sample_lines) if sample_lines else "    (sin datos)"
 
         table_descriptions.append(
             f"- Tabla '{t['sheet_name']}' (id={t['id']}): {t.get('row_count', '?')} filas\n"
@@ -296,180 +181,224 @@ def _build_system_prompt(tables_context: list[dict]) -> str:
 
     tables_block = "\n".join(table_descriptions)
 
-    return f"""Eres un analista de datos experto. Tu trabajo es analizar las tablas del proyecto y generar un dashboard con widgets (gráficos, KPIs e insights).
+    return f"""Eres un planificador de análisis de datos experto. Analiza las tablas y determina qué funciones ejecutar para generar insights de máximo valor.
 
 ## TABLAS DEL PROYECTO
 
 {tables_block}
 
+## FUNCIONES DISPONIBLES
+
+1. get_column_summary(table, column) — resumen de columna (min, max, nulos, únicos, top3)
+2. calculate_kpi(table, agg_col, operation, filter_col, filter_val) — KPI agregado [SUM|AVG|MAX|MIN|COUNT], filtro opcional
+3. period_over_period_growth(table, date_col, agg_col, operation, interval) — crecimiento vs periodo anterior [month|quarter|year]
+4. group_by_category(table, group_col, agg_col, operation, limit) — agrupar por categoría [{{name, value}}]
+5. time_series_trend(table, date_col, agg_col, operation, interval) — serie temporal [{{period, value}}]
+6. cross_tabulation(table, group_col_1, group_col_2, agg_col, operation, limit) — tabla cruzada {{categories, series}}
+7. distribution_bins(table, numeric_col, bins) — distribución en rangos [{{range, count}}]
+8. find_top_bottom_records(table, entity_col, agg_col, operation, n) — top/bottom N {{top, bottom}}
+9. correlation_check(table, num_col_1, num_col_2) — correlación Pearson + puntos scatter
+10. join_and_aggregate(table1, table2, join_col1, join_col2, group_col, agg_col, operation, limit) — join + agregación
+
 ## REGLAS
 
-1. Máximo 5 gráficos (charts)
-2. Siempre incluir al menos 1-2 KPIs
-3. Incluir 2-4 insights con emoji y severity
-4. Si hay una columna de fecha → incluir al menos un line chart
-5. Si hay categoría + número → incluir bar chart
-6. NO usar pie chart si hay más de 6 categorías distintas
-7. Barras apiladas (stacked) cuando hay 2+ series por categoría
-8. Barras horizontales (horizontal) cuando las etiquetas de categoría son largas (>20 caracteres)
-9. Los insights deben ser accionables, no obvios ("La tabla tiene datos" = malo)
-10. Mezclar severities en los insights (no todos "info")
-11. Usar variantes de gráfico cuando sea apropiado (stacked, horizontal, multi, area, doughnut)
-
-## FORMATO DE SALIDA
-
-Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
-
-{{
-  "widgets": [
-    {{
-      "id": "kpi1",
-      "type": "kpi",
-      "label": "Total Ventas",
-      "value": 150000,
-      "format": "currency",
-      "prefix": "$",
-      "trend": "up",
-      "trendValue": "+12%"
-    }},
-    {{
-      "id": "w1",
-      "type": "chart",
-      "chartType": "bar",
-      "variant": "stacked",
-      "title": "Ventas por Categoría",
-      "x": "categoría",
-      "series": [
-        {{"name": "Hombre", "data": [{{"name": "Ropa", "value": 5000}}, {{"name": "Calzado", "value": 3200}}]}},
-        {{"name": "Mujer", "data": [{{"name": "Ropa", "value": 4500}}, {{"name": "Calzado", "value": 2800}}]}}
-      ]
-    }},
-    {{
-      "id": "w2",
-      "type": "chart",
-      "chartType": "line",
-      "variant": "area",
-      "title": "Tendencia de Ventas",
-      "x": "fecha",
-      "data": [{{"name": "Ene", "value": 12000}}, {{"name": "Feb", "value": 15000}}]
-    }},
-    {{
-      "id": "w3",
-      "type": "chart",
-      "chartType": "pie",
-      "variant": "doughnut",
-      "title": "Distribución por Categoría",
-      "data": [{{"name": "Ropa", "value": 45}}, {{"name": "Calzado", "value": 30}}]
-    }},
-    {{
-      "id": "i1",
-      "type": "insight",
-      "emoji": "🔥",
-      "content": "El producto más vendido es X con Y unidades",
-      "severity": "positive"
-    }},
-    {{
-      "id": "i2",
-      "type": "insight",
-      "emoji": "⚠️",
-      "content": "Marzo tuvo una caída del 12% respecto a febrero",
-      "severity": "warning"
-    }}
-  ]
-}}
-
-### Campos por tipo de widget:
-
-**KPI**: id, type="kpi", label, value (number), format ("currency"|"number"|"percent"), prefix? (ej: "$"), suffix? (ej: "unidades"), trend? ("up"|"down"|"neutral"), trendValue? (ej: "+12%")
-
-**Chart**: id, type="chart", chartType ("bar"|"line"|"pie"), variant? ("stacked"|"grouped"|"horizontal"|"multi"|"area"|"doughnut"), title, x?, y?, data? ([{{name, value}}]), series? ([{{name, data: [{{name, value}}]}}]), orientation? ("horizontal"), areaStyle? ({{}})
-
-**Insight**: id, type="insight", emoji (1 emoji), content (texto descriptivo accionable), severity ("positive"|"negative"|"warning"|"info")
-
-IMPORTANTE: Responde SOLO con el JSON, sin markdown, sin bloques de código, sin texto adicional."""
+1. Selecciona 4-8 funciones que maximicen los insights del dataset
+2. Si hay columna de fecha → incluye time_series_trend y period_over_period_growth
+3. Si hay columna numérica → incluye calculate_kpi y distribution_bins
+4. Si hay categoría + número → incluye group_by_category
+5. Si hay 2+ columnas numéricas → incluye correlation_check
+6. El parámetro `table` usa el sheet_name de las tablas listadas arriba
+7. Todos los valores de parámetros deben ser strings
+8. El campo `message` describe tu estrategia para el diseñador del dashboard"""
 
 
-# ── Output validation ─────────────────────────────────────────────────
+def _build_designer_prompt(execution_results: dict) -> str:
+    """Build the Diseñador system prompt with analytical results."""
+    results_str = json.dumps(execution_results, ensure_ascii=False, default=str, indent=2)
+    strategy = execution_results.get("estrategia_sugerida", "")
 
-def _validate_widget(widget: dict) -> str | None:
-    """Validate a single widget against its schema.
+    return f"""Eres un diseñador de dashboards experto. Recibirás los resultados de análisis estadísticos y debes diseñar un dashboard profesional con KPIs y gráficos.
 
-    Returns an error message string if invalid, or None if valid.
+## RESULTADOS DE ANÁLISIS
+
+{results_str}
+
+## ESTRATEGIA DEL PLANIFICADOR
+
+{strategy}
+
+## REGLAS
+
+1. Genera 2-4 KPIs relevantes con valores concretos extraídos de los resultados
+2. Genera un número PAR de gráficos (2, 4, 6 o 8)
+3. Tipos de chartType: bar, line, pie, scatter
+4. Variantes: stacked, horizontal, area, doughnut, histogram
+5. Cada gráfico DEBE incluir colorPalette: array de 4-6 hex codes (#RRGGBB)
+6. Pie chart SOLO si ≤5 categorías en los datos, si no usar bar
+7. scatter chart para datos de correlación — usa campos x/y en los data items
+8. histogram variant para datos de distribución — rangos como labels (name)
+9. El resumen_ejecutivo debe ser en Markdown con 3-5 bullets de insights clave
+10. Formatos KPI: "currency", "number", "percent"
+11. trend: "up", "down" o "neutral"
+12. x_label e y_label describen los ejes del gráfico"""
+
+
+# ── Step 1: Planificador ──────────────────────────────────────────────
+
+
+def generate_execution_plan(
+    db: Session,
+    project_id: int,
+    engine: AnalyticsEngine,
+    tables_context: list[dict],
+) -> dict:
+    """Call IA 1 to produce an execution plan.
+
+    Returns the parsed JSON: {ejecutar: [...], message: "..."}.
     """
-    widget_type = widget.get("type")
-    if widget_type == "kpi":
-        try:
-            KpiWidgetSchema(**widget)
-        except Exception as exc:
-            return f"KPI widget validation error: {exc}"
-    elif widget_type == "chart":
-        try:
-            ChartWidgetSchema(**widget)
-        except Exception as exc:
-            return f"Chart widget validation error: {exc}"
-    elif widget_type == "insight":
-        try:
-            InsightWidgetSchema(**widget)
-        except Exception as exc:
-            return f"Insight widget validation error: {exc}"
-    else:
-        return f"Unknown widget type: {widget_type}"
-    return None
+    client = _get_client()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    system_prompt = _build_plan_prompt(tables_context)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": "Genera el plan de ejecución para analizar este dataset. Responde con el JSON.",
+        },
+    ]
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        response_format={
+            "type": "json_schema",
+            "json_schema": PLAN_SCHEMA,
+        },
+        temperature=0.3,
+    )
+
+    raw = response.choices[0].message.content
+    return json.loads(raw)
 
 
-def _validate_dashboard_config(config: dict) -> str | None:
-    """Validate a full dashboard config.
+# ── Step 2: Middleware Ejecutor ───────────────────────────────────────
 
-    Returns an error message if invalid, or None if valid.
+
+def _safe_call(func, params: dict):
+    """Call *func* filtering to only its accepted parameter names."""
+    sig = inspect.signature(func)
+    valid = {k: v for k, v in params.items() if k in sig.parameters}
+    return func(**valid)
+
+
+def execute_plan(plan_json: dict, engine: AnalyticsEngine) -> dict:
+    """Dispatch each plan entry to the corresponding AnalyticsEngine method.
+
+    Per-function try/except — pipeline never aborts (REQ-1.7).
     """
-    if "widgets" not in config:
-        return "Missing 'widgets' field"
-    if not isinstance(config["widgets"], list):
-        return "'widgets' must be an array"
+    dispatch = {
+        "get_column_summary": engine.get_column_summary,
+        "calculate_kpi": engine.calculate_kpi,
+        "period_over_period_growth": engine.period_over_period_growth,
+        "group_by_category": engine.group_by_category,
+        "time_series_trend": engine.time_series_trend,
+        "cross_tabulation": engine.cross_tabulation,
+        "distribution_bins": engine.distribution_bins,
+        "find_top_bottom_records": engine.find_top_bottom_records,
+        "correlation_check": engine.correlation_check,
+        "join_and_aggregate": engine.join_and_aggregate,
+    }
 
-    for i, widget in enumerate(config["widgets"]):
-        if not isinstance(widget, dict):
-            return f"Widget at index {i} is not an object"
-        error = _validate_widget(widget)
-        if error:
-            return f"Widget {i} ({widget.get('id', 'unknown')}): {error}"
+    results: list[dict] = []
+    for entry in plan_json.get("ejecutar", []):
+        fn_name = entry.get("function_name", "")
+        params = entry.get("parametros", {})
 
-    return None
+        handler = dispatch.get(fn_name)
+        if handler is None:
+            results.append({
+                "function": fn_name,
+                "status": "error",
+                "error": f"Unknown function: {fn_name}",
+            })
+            continue
 
-
-# ── JSON extraction from AI response ──────────────────────────────────
-
-def _extract_json(content: str) -> dict | None:
-    """Extract JSON from AI response content.
-
-    Handles cases where AI wraps JSON in markdown code blocks.
-    """
-    text = content.strip()
-
-    # Try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try stripping markdown code blocks
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove first line (```json or ```) and last line (```)
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
+            result = _safe_call(handler, params)
+            results.append({"function": fn_name, "status": "ok", "data": result})
+        except Exception as exc:
+            results.append({"function": fn_name, "status": "error", "error": str(exc)})
 
-    return None
+    return {
+        "resultados_funciones": results,
+        "estrategia_sugerida": plan_json.get("message", ""),
+    }
 
 
-# ── Main generation function ──────────────────────────────────────────
+# ── Step 3: Diseñador ────────────────────────────────────────────────
+
+
+def generate_final_dashboard(execution_results: dict) -> dict:
+    """Call IA 2 to design the dashboard from analytical results."""
+    client = _get_client()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    system_prompt = _build_designer_prompt(execution_results)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": "Diseña el dashboard con KPIs y gráficos basándote en los resultados. Responde con el JSON.",
+        },
+    ]
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        response_format={
+            "type": "json_schema",
+            "json_schema": DESIGNER_SCHEMA,
+        },
+        temperature=0.3,
+    )
+
+    raw = response.choices[0].message.content
+    return json.loads(raw)
+
+
+# ── Post-processing helpers ───────────────────────────────────────────
+
+
+def _enforce_even_charts(graficos: list[dict]) -> list[dict]:
+    """Drop lowest-value chart if count is odd (AD-3)."""
+    if len(graficos) % 2 == 0 or not graficos:
+        return graficos
+
+    # Score each chart by aggregate data value
+    scored = [
+        (i, sum(item.get("value", 0) for item in (g.get("data") or [])))
+        for i, g in enumerate(graficos)
+    ]
+    drop_idx = min(scored, key=lambda x: x[1])[0]
+    return [g for i, g in enumerate(graficos) if i != drop_idx]
+
+
+def _map_to_widgets(designer_output: dict) -> list[dict]:
+    """Map IA 2 output (kpis + graficos) to frontend-compatible widgets[] (AD-6)."""
+    widgets: list[dict] = []
+
+    for kpi in designer_output.get("kpis", []):
+        widgets.append({**kpi, "type": "kpi", "format": kpi.get("format", "number")})
+
+    for graf in designer_output.get("graficos", []):
+        widgets.append({**graf, "type": "chart"})
+
+    return widgets
+
+
+# ── Orchestrator ──────────────────────────────────────────────────────
+
 
 def generate_dashboard(
     db: Session,
@@ -477,161 +406,28 @@ def generate_dashboard(
     engine: AnalyticsEngine,
     tables_context: list[dict],
 ) -> dict:
-    """Run the AI agent loop to generate a dashboard configuration.
+    """Run the 3-step pipeline and return a dashboard configuration.
 
-    Args:
-        db: SQLAlchemy session.
-        project_id: The project ID.
-        engine: AnalyticsEngine instance for tool execution.
-        tables_context: Table metadata for system prompt injection.
-
-    Returns:
-        A dict with `widgets` and `generated_at`.
-
-    Raises:
-        TimeoutError: If generation exceeds the timeout limit.
-        ValueError: If the AI fails to produce valid output.
+    Returns a dict with ``widgets``, ``generated_at``, and ``resumen_ejecutivo``.
     """
-    client = _get_client()
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    # Step 1 — Planificador
+    plan = generate_execution_plan(db, project_id, engine, tables_context)
 
-    # Build system prompt
-    system_prompt = _build_system_prompt(tables_context)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-    ]
+    # Step 2 — Middleware
+    execution_results = execute_plan(plan, engine)
 
-    start_time = time.monotonic()
-    tool_calls_count = 0
-    dashboard_config = None
+    # Step 3 — Diseñador
+    designer_output = generate_final_dashboard(execution_results)
 
-    for iteration in range(MAX_ITERATIONS):
-        # Check timeout
-        elapsed = time.monotonic() - start_time
-        if elapsed >= TIMEOUT_SECONDS:
-            raise TimeoutError("Dashboard generation timed out")
+    # Post-process
+    graficos = _enforce_even_charts(designer_output.get("graficos", []))
+    designer_output["graficos"] = graficos
 
-        # Call OpenAI
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=TOOL_DEFINITIONS,
-            tool_choice="auto",
-            temperature=0.3,
-        )
+    # Map to widgets
+    widgets = _map_to_widgets(designer_output)
 
-        msg = response.choices[0].message
-
-        # Append assistant message to conversation
-        assistant_msg: dict[str, Any] = {"role": "assistant"}
-        if msg.content:
-            assistant_msg["content"] = msg.content
-        if msg.tool_calls:
-            assistant_msg["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg.tool_calls
-            ]
-        messages.append(assistant_msg)
-
-        # Handle tool calls
-        if msg.tool_calls:
-            tool_calls_count += len(msg.tool_calls)
-
-            # Check tool call limit
-            if tool_calls_count > MAX_TOOL_CALLS:
-                # Force generation with available data
-                messages.append({
-                    "role": "user",
-                    "content": "Genera el dashboard ahora con los datos que tienes. Responde SOLO con el JSON.",
-                })
-                continue
-
-            # Execute each tool call
-            for tc in msg.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-
-                result = engine.execute_tool(tc.function.name, args)
-                result_str = json.dumps(result, ensure_ascii=False, default=str)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result_str,
-                })
-
-            continue  # Go to next iteration to let AI process tool results
-
-        # No tool calls — try to parse as final JSON output
-        if msg.content:
-            parsed = _extract_json(msg.content)
-            if parsed is not None:
-                validation_error = _validate_dashboard_config(parsed)
-                if validation_error is None:
-                    dashboard_config = parsed
-                    break
-                else:
-                    # Re-prompt once with error details
-                    retry_msg = {
-                        "role": "user",
-                        "content": f"El JSON es inválido: {validation_error}. Corrige y retorna el JSON válido. Responde SOLO con el JSON corregido.",
-                    }
-                    messages.append(retry_msg)
-
-                    # One retry call
-                    retry_response = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        tools=TOOL_DEFINITIONS,
-                        tool_choice="auto",
-                        temperature=0.2,
-                    )
-                    retry_msg_content = retry_response.choices[0].message.content
-                    if retry_msg_content:
-                        retry_parsed = _extract_json(retry_msg_content)
-                        if retry_parsed is not None:
-                            retry_error = _validate_dashboard_config(retry_parsed)
-                            if retry_error is None:
-                                dashboard_config = retry_parsed
-                                break
-
-                    # If retry also failed, try one more forced generation
-                    break
-
-    # If loop exhausted without valid output, try one forced generation
-    if dashboard_config is None:
-        messages.append({
-            "role": "user",
-            "content": "Genera el dashboard ahora con los datos que tienes. Responde SOLO con el JSON de widgets.",
-        })
-        try:
-            forced_response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-            )
-            forced_content = forced_response.choices[0].message.content
-            if forced_content:
-                forced_parsed = _extract_json(forced_content)
-                if forced_parsed is not None:
-                    _validate_dashboard_config(forced_parsed)  # Best effort
-                    dashboard_config = forced_parsed
-        except Exception:
-            pass
-
-    if dashboard_config is None:
-        raise ValueError("AI failed to generate a valid dashboard configuration")
-
-    # Add generated_at timestamp
-    dashboard_config["generated_at"] = datetime.now(timezone.utc).isoformat()
-
-    return dashboard_config
+    return {
+        "widgets": widgets,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "resumen_ejecutivo": designer_output.get("resumen_ejecutivo", ""),
+    }
