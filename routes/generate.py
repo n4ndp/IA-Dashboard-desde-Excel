@@ -180,4 +180,5 @@ def iterate_dashboard_endpoint(
         widgets=config.get("widgets", []),
         generated_at=config.get("generated_at"),
         resumen_ejecutivo=config.get("resumen_ejecutivo"),
+        action_message=config.get("action_message"),
     )

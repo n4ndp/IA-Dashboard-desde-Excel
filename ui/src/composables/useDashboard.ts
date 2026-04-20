@@ -11,6 +11,7 @@ export function useDashboard(userId: number, projectId: number, existingConfig?:
   const state = ref<DashboardState>('empty')
   const widgets = ref<DashboardWidgetMap[]>([])
   const errorMessage = ref<string>('')
+  const resumenEjecutivo = ref<string>('')
 
   // Initialize from existing dashboard_config if present
   if (existingConfig?.widgets?.length) {
@@ -46,6 +47,7 @@ export function useDashboard(userId: number, projectId: number, existingConfig?:
 
       const data = await response.json()
       widgets.value = data.widgets ?? []
+      resumenEjecutivo.value = data.resumen_ejecutivo || ''
       state.value = 'generated'
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error de conexión al generar el dashboard'
@@ -67,7 +69,8 @@ export function useDashboard(userId: number, projectId: number, existingConfig?:
       }
 
       widgets.value = data.widgets
-      return data.resumen_ejecutivo
+      resumenEjecutivo.value = data.resumen_ejecutivo || ''
+      return data.action_message || data.resumen_ejecutivo
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error de conexión al iterar el dashboard'
       errorMessage.value = msg
@@ -80,6 +83,7 @@ export function useDashboard(userId: number, projectId: number, existingConfig?:
     state,
     widgets,
     errorMessage,
+    resumenEjecutivo,
     generate,
     iterate,
   }

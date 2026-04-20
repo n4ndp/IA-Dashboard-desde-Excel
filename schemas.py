@@ -160,6 +160,7 @@ class GenerateDashboardResponse(BaseModel):
     widgets: list[dict[str, Any]]
     generated_at: datetime
     resumen_ejecutivo: str | None = None
+    action_message: str | None = None
 
 
 class IterateDashboardRequest(BaseModel):

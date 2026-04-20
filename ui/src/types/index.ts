@@ -127,4 +127,5 @@ export interface DashboardConfig {
   widgets: DashboardWidgetMap[]
   generated_at?: string
   resumen_ejecutivo?: string
+  action_message?: string
 }

@@ -16,7 +16,7 @@ const props = defineProps<{
   existingDashboard?: { widgets: unknown[] } | null
 }>()
 
-const { state, widgets, errorMessage, generate, iterate } = useDashboard(
+const { state, widgets, errorMessage, resumenEjecutivo, generate, iterate } = useDashboard(
   props.userId,
   props.projectId,
   props.existingDashboard as { widgets: import('../../types').DashboardWidgetMap[] } | null | undefined,
@@ -37,14 +37,18 @@ async function handleChatSubmit() {
   chatLoading.value = true
   chatInput.value = ''
 
-  const resumen = await iterate(prompt)
+  // Optimistic: show user message immediately
+  lastExchange.value = { user: prompt, ai: '' }
+
+  const actionMsg = await iterate(prompt)
 
   chatLoading.value = false
 
-  if (resumen) {
-    lastExchange.value = { user: prompt, ai: resumen }
+  if (actionMsg) {
+    lastExchange.value = { user: prompt, ai: actionMsg }
   } else if (errorMessage.value) {
     toast.show(errorMessage.value, 'error')
+    lastExchange.value = null
   }
 }
 </script>
@@ -98,6 +102,7 @@ async function handleChatSubmit() {
     <DashboardRenderer
       v-else-if="state === 'generated'"
       :widgets="widgets"
+      :resumen="resumenEjecutivo"
     />
 
     <!-- Chat overlay — visible only when dashboard is generated -->
@@ -118,7 +123,8 @@ async function handleChatSubmit() {
         <!-- AI response -->
         <div class="flex items-start gap-2">
           <Sparkles class="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-          <p class="text-sm text-text-primary">{{ lastExchange.ai }}</p>
+          <div v-if="chatLoading && !lastExchange.ai" class="spinner-sm" />
+          <p v-else class="text-sm text-text-primary">{{ lastExchange.ai }}</p>
         </div>
       </div>
 

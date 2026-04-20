@@ -153,8 +153,9 @@ DESIGNER_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
+            "accion_realizada": {"type": ["string", "null"]},
         },
-        "required": ["resumen_ejecutivo", "kpis", "graficos"],
+        "required": ["resumen_ejecutivo", "kpis", "graficos", "accion_realizada"],
         "additionalProperties": False,
     },
 }
@@ -222,20 +223,25 @@ def _build_plan_prompt(
 
     # Inject iteration block when both params are present
     if user_prompt is not None and current_dashboard is not None:
-        compact = _compact_dashboard(current_dashboard)
-        dash_json = json.dumps(compact, ensure_ascii=False, default=str)
+        dash_json = json.dumps(current_dashboard, ensure_ascii=False, default=str)
         iteration_block = f"""
 
-## DASHBOARD EXISTENTE (MODIFICACIÓN)
+## MODIFICACIÓN QUIRÚRGICA — JSON COMPLETO
 
-A continuación se muestra el JSON del dashboard actual. El usuario quiere modificarlo con:
+A continuación se muestra el JSON COMPLETO del dashboard actual (sin truncar). El usuario quiere:
 **"{user_prompt}"**
 
-Dashboard actual:
+JSON completo del dashboard actual:
 {dash_json}
 
-**Regla de cambio cosmético**: Si el pedido es solo de cambios visuales (colores, títulos, disposición) que NO requieren nuevos datos → output `"ejecutar": []`.
-**Regla de cambio de datos**: Si el pedido requiere nuevos cálculos o datos → incluye las funciones necesarias."""
+### REGLAS DE MODIFICACIÓN (OBLIGATORIO):
+
+1. **Alcance estricto**: Analiza EXCLUSIVAMENTE lo que el usuario pidió. No añadas mejoras, optimizaciones ni sugerencias no solicitadas.
+2. **Cambio cosmético** (colores, títulos, disposición, textos — sin nuevos datos): → output `"ejecutar": []`. No se necesitan funciones analíticas.
+3. **Cambio de datos** (nuevos cálculos, gráficos o KPIs): → incluye SOLO las funciones estrictamente necesarias para lo pedido. NO repitas funciones cuyos datos ya existen en el dashboard.
+4. **NO reemplaces la estrategia existente**: El mensaje (`message`) actual es válido. Ajusta SOLO lo indispensable para reflejar el cambio pedido. Mantén la complejidad y el objetivo de KPIs/gráficos del plan original.
+5. **NO expandas el alcance**: Si el usuario pide un gráfico nuevo, agrega SOLO ese gráfico. No agregues KPIs, insights ni widgets extra no pedidos.
+6. **Preserva el contexto completo**: El JSON del dashboard contiene todos los widgets, datos y configuración actuales. Úsalos para entender qué ya existe y evitar duplicar."""
 
         # Insert iteration block between tables_block and FUNCIONES DISPONIBLES
         base += iteration_block
@@ -577,24 +583,39 @@ def _build_designer_prompt(
 
     # Inject iteration block when both params are present
     if user_prompt is not None and current_dashboard is not None:
-        compact = _compact_dashboard(current_dashboard)
-        dash_json = json.dumps(compact, ensure_ascii=False, default=str)
+        dash_json = json.dumps(current_dashboard, ensure_ascii=False, default=str)
         iteration_block = f"""
 
-## DASHBOARD EXISTENTE — MODIFICACIÓN
+## DASHBOARD EXISTENTE — MODIFICACIÓN QUIRÚRGICA
 
-A continuación el JSON del dashboard actual. El usuario pidió:
+A continuación el JSON COMPLETO del dashboard actual (sin truncar). El usuario pidió:
 **"{user_prompt}"**
 
-Dashboard actual:
+JSON completo del dashboard actual:
 {dash_json}
 
-**Instrucciones de modificación**:
-- MODIFICA el JSON existente — genera solo los cambios necesarios
-- Mantén los widgets que NO requieren cambios intactos
-- Si hay nuevos datos de funciones → intégralos en widgets nuevos o existentes
-- Mantén el conteo total de gráficos PAR (2, 4, 6, 8...)
-- Cambios cosméticos (colores, títulos, disposición) → preserva la estructura de datos"""
+### REGLAS DE PRESERVACIÓN:
+
+1. **Copia fiel por ID**: Cada widget existente (k1, k2, g1, g2…) debe aparecer en tu output EXACTAMENTE con los mismos datos, colores, títulos y tipo, A MENOS que el usuario haya pedido cambiar ESE widget específico.
+2. **Estabilidad de IDs**: Los IDs existentes (k1, g1, g2…) NO cambian. Asigna IDs nuevos (k3, g3, g4…) solo a widgets creados desde cero.
+3. **Preservación de datos exactos**: Copia los valores numéricos, arrays de data y series TAL CUAL. No redondees, no recalculas, no reordenes datos existentes.
+4. **Cambios cosméticos**: Si el usuario pide cambiar colores de g1, cambias SOLO colorPalette de g1. El resto de g1 (data, title, chartType, variant) queda idéntico. Todos los demás widgets quedan idénticos.
+5. **Datos nuevos = widgets adicionales**: Si el usuario pide un gráfico nuevo y hay datos de funciones nuevas, AGREGA widgets nuevos. Los existentes se mantienen intactos.
+
+### REGLAS NEGATIVAS (NO HACER):
+
+- NO "mejores" ni optimices widgets que el usuario no mencionó.
+- NO cambies colores de widgets no mencionados.
+- NO reescribas títulos o labels de widgets no mencionados.
+- NO reordenes los widgets — mantén el orden original.
+- NO cambies chartType o variant sin instrucción explícita del usuario.
+- NO recalculas datos existentes — copia los valores originales fielmente.
+
+### REGLAS DE ESTRUCTURA:
+
+- El total de `graficos` debe ser PAR (2, 4, 6, 8…). Si al agregar queda impar, agrega otro widget con datos disponibles o elimina el de menor valor.
+- Si hay datos de funciones nuevas → intégralos en widgets nuevos con IDs incrementales.
+- **accion_realizada**: Describe el cambio específico Y confirma qué preservaste. Ej: "Cambié colores de g1 a Paleta Neón, g2 y KPIs sin cambios". NUNCA dejes este campo vacío en modo iteración."""
         base += iteration_block
 
     base += f"""
@@ -1009,4 +1030,5 @@ def iterate_dashboard(
         "widgets": widgets,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "resumen_ejecutivo": designer_output.get("resumen_ejecutivo", ""),
+        "action_message": designer_output.get("accion_realizada") or "",
     }
