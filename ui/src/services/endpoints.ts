@@ -9,6 +9,8 @@ import type {
   SingleTableResponse,
   CreateProjectResponse,
   UploadResponse,
+  DashboardConfig,
+  DashboardWidgetMap,
 } from '../types'
 
 // ── Users ──
@@ -76,4 +78,17 @@ export async function deleteTable(
   tableId: number,
 ): Promise<void> {
   return request('DELETE', `/users/${userId}/projects/${projectId}/tables/${tableId}`)
+}
+
+// ── Chat / Iteration ──
+
+export async function chatDashboard(
+  userId: number,
+  projectId: number,
+  prompt: string,
+  currentDashboard: { widgets: DashboardWidgetMap[] },
+): Promise<DashboardConfig> {
+  return request('POST', `/users/${userId}/projects/${projectId}/chat`, {
+    body: { prompt, current_dashboard: currentDashboard },
+  })
 }

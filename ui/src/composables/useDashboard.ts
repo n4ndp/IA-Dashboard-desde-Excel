@@ -5,6 +5,7 @@
 
 import { ref } from 'vue'
 import type { DashboardState, DashboardWidgetMap } from '../types'
+import { chatDashboard } from '../services/endpoints'
 
 export function useDashboard(userId: number, projectId: number, existingConfig?: { widgets: DashboardWidgetMap[] } | null) {
   const state = ref<DashboardState>('empty')
@@ -53,10 +54,33 @@ export function useDashboard(userId: number, projectId: number, existingConfig?:
     }
   }
 
+  async function iterate(prompt: string): Promise<string | undefined> {
+    if (state.value === 'loading') return undefined
+
+    const previousWidgets = widgets.value
+    errorMessage.value = ''
+
+    try {
+      const data = await chatDashboard(userId, projectId, prompt, { widgets: widgets.value })
+      if (!Array.isArray(data.widgets)) {
+        throw new Error('Respuesta inválida del servidor al iterar el dashboard')
+      }
+
+      widgets.value = data.widgets
+      return data.resumen_ejecutivo
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error de conexión al iterar el dashboard'
+      errorMessage.value = msg
+      widgets.value = previousWidgets
+      return undefined
+    }
+  }
+
   return {
     state,
     widgets,
     errorMessage,
     generate,
+    iterate,
   }
 }

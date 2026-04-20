@@ -2,10 +2,11 @@
 // ── AnalisisTab ──
 // Analysis tab container with 4-state machine: empty → loading → generated | error.
 // Uses useDashboard composable for state management with real API integration.
-// Chat overlay: floating mini-chat for iterative dashboard modifications (Phase 1 mockup).
+// Chat overlay: floating mini-chat for iterative dashboard modifications (real API).
 
 import { ref } from 'vue'
 import { useDashboard } from '../../composables/useDashboard'
+import { useToast } from '../../composables/useToast'
 import DashboardRenderer from './DashboardRenderer.vue'
 import { BarChart3, Loader2, AlertCircle, MessageSquare, Sparkles, Send, ChevronUp, ChevronDown } from 'lucide-vue-next'
 
@@ -15,11 +16,13 @@ const props = defineProps<{
   existingDashboard?: { widgets: unknown[] } | null
 }>()
 
-const { state, widgets, errorMessage, generate } = useDashboard(
+const { state, widgets, errorMessage, generate, iterate } = useDashboard(
   props.userId,
   props.projectId,
   props.existingDashboard as { widgets: import('../../types').DashboardWidgetMap[] } | null | undefined,
 )
+
+const toast = useToast()
 
 // ── Chat state ──
 const chatInput = ref('')
@@ -27,18 +30,22 @@ const chatLoading = ref(false)
 const lastExchange = ref<{ user: string; ai: string } | null>(null)
 const chatExpanded = ref(true)
 
-const MOCK_AI_RESPONSE =
-  'He actualizado el gráfico de ventas por categoría, ahora muestra los datos agrupados por región con una paleta de colores más representativa. También ajusté el KPI principal para reflejar el ticket promedio en vez del total. Los cambios ya se reflejan en tu dashboard.'
+async function handleChatSubmit() {
+  const prompt = chatInput.value.trim()
+  if (!prompt || chatLoading.value) return
 
-function handleChatSubmit() {
-  if (!chatInput.value.trim() || chatLoading.value) return
-  const userMsg = chatInput.value.trim()
   chatLoading.value = true
   chatInput.value = ''
-  setTimeout(() => {
-    chatLoading.value = false
-    lastExchange.value = { user: userMsg, ai: MOCK_AI_RESPONSE }
-  }, 2000)
+
+  const resumen = await iterate(prompt)
+
+  chatLoading.value = false
+
+  if (resumen) {
+    lastExchange.value = { user: prompt, ai: resumen }
+  } else if (errorMessage.value) {
+    toast.show(errorMessage.value, 'error')
+  }
 }
 </script>
 

@@ -163,7 +163,40 @@ DESIGNER_SCHEMA = {
 # ── Prompt builders ────────────────────────────────────────────────────
 
 
-def _build_plan_prompt(tables_context: list[dict]) -> str:
+def _compact_dashboard(current_dashboard: dict[str, Any]) -> dict[str, Any]:
+    """Compact a large dashboard dict to avoid token overflow in prompts.
+
+    Caps each widget's data/series arrays to MAX_DATA_POINTS entries and
+    drops empty/null fields. Keeps widget skeleton (id, type, title,
+    chartType, etc.) intact for the designer to understand layout.
+    """
+    MAX_DATA_POINTS = 10
+    MAX_WIDGETS = 20
+
+    widgets = current_dashboard.get("widgets", [])
+    if not widgets:
+        return current_dashboard
+
+    compacted_widgets = []
+    for w in widgets[:MAX_WIDGETS]:
+        cw = {k: v for k, v in w.items() if v is not None}
+        if "data" in cw and isinstance(cw["data"], list):
+            cw["data"] = cw["data"][:MAX_DATA_POINTS]
+        if "series" in cw and isinstance(cw["series"], list):
+            cw["series"] = [
+                {**s, "data": (s.get("data") or [])[:MAX_DATA_POINTS]}
+                for s in cw["series"]
+            ]
+        compacted_widgets.append(cw)
+
+    return {"widgets": compacted_widgets}
+
+
+def _build_plan_prompt(
+    tables_context: list[dict],
+    user_prompt: str | None = None,
+    current_dashboard: dict[str, Any] | None = None,
+) -> str:
     import json
 
     table_descriptions = []
@@ -181,11 +214,33 @@ def _build_plan_prompt(tables_context: list[dict]) -> str:
 
     tables_block = "\n".join(table_descriptions)
 
-    return f"""Eres un Arquitecto de Datos experto en análisis de negocio. Tu misión es diseñar el plan de análisis óptimo para construir un dashboard de alto impacto.
+    base = f"""Eres un Arquitecto de Datos experto en análisis de negocio. Tu misión es diseñar el plan de análisis óptimo para construir un dashboard de alto impacto.
 
 ## TABLAS DEL PROYECTO
 
-{tables_block}
+{tables_block}"""
+
+    # Inject iteration block when both params are present
+    if user_prompt is not None and current_dashboard is not None:
+        compact = _compact_dashboard(current_dashboard)
+        dash_json = json.dumps(compact, ensure_ascii=False, default=str)
+        iteration_block = f"""
+
+## DASHBOARD EXISTENTE (MODIFICACIÓN)
+
+A continuación se muestra el JSON del dashboard actual. El usuario quiere modificarlo con:
+**"{user_prompt}"**
+
+Dashboard actual:
+{dash_json}
+
+**Regla de cambio cosmético**: Si el pedido es solo de cambios visuales (colores, títulos, disposición) que NO requieren nuevos datos → output `"ejecutar": []`.
+**Regla de cambio de datos**: Si el pedido requiere nuevos cálculos o datos → incluye las funciones necesarias."""
+
+        # Insert iteration block between tables_block and FUNCIONES DISPONIBLES
+        base += iteration_block
+
+    base += """
 
 ## FUNCIONES DISPONIBLES
 
@@ -497,14 +552,20 @@ Output correcto:
   "message": "COMPLEJIDAD: Grande (10 tablas, ~50 columnas, ~1400 filas). OBJETIVO: 6-8 KPIs, 10-12 gráficos. Diseñador: dataset complejo con 10 tablas interconectadas. Exploré ventas, pagos, envíos, inventario y reseñas. Sugiero: (1) KPI Facturación total con trend, (2) KPI Ticket promedio, (3) KPI Satisfacción promedio, (4) Area chart tendencia mensual, (5) Bar chart ventas por categoría, (6) Bar horizontal ventas por región, (7) Donut tipo de cliente, (8) Bar horizontal top 8 productos, (9) Donut método de pago, (10) Bar horizontal costo envío por región, (11) Donut estados de envío, (12) Bar horizontal stock por proveedor. Insights: categoría líder, región con mayor costo de envío, satisfacción vs ventas, método de pago dominante."
 }}"""
 
+    return base
 
-def _build_designer_prompt(execution_results: dict) -> str:
+
+def _build_designer_prompt(
+    execution_results: dict,
+    user_prompt: str | None = None,
+    current_dashboard: dict[str, Any] | None = None,
+) -> str:
     import json
 
     results_str = json.dumps(execution_results, ensure_ascii=False, indent=2)
     strategy = execution_results.get("estrategia_sugerida", "")
 
-    return f"""Eres un Experto en Visualización de Datos y Diseño de Dashboards. Recibes datos pre-calculados por un sistema analítico y debes generar la configuración JSON de un dashboard profesional y visualmente impactante.
+    base = f"""Eres un Experto en Visualización de Datos y Diseño de Dashboards. Recibes datos pre-calculados por un sistema analítico y debes generar la configuración JSON de un dashboard profesional y visualmente impactante.
 
 ## DATOS Y ESTRATEGIA ANALÍTICA
 
@@ -512,7 +573,31 @@ def _build_designer_prompt(execution_results: dict) -> str:
 
 ## ESTRATEGIA SUGERIDA POR EL ARQUITECTO
 
-{strategy}
+{strategy}"""
+
+    # Inject iteration block when both params are present
+    if user_prompt is not None and current_dashboard is not None:
+        compact = _compact_dashboard(current_dashboard)
+        dash_json = json.dumps(compact, ensure_ascii=False, default=str)
+        iteration_block = f"""
+
+## DASHBOARD EXISTENTE — MODIFICACIÓN
+
+A continuación el JSON del dashboard actual. El usuario pidió:
+**"{user_prompt}"**
+
+Dashboard actual:
+{dash_json}
+
+**Instrucciones de modificación**:
+- MODIFICA el JSON existente — genera solo los cambios necesarios
+- Mantén los widgets que NO requieren cambios intactos
+- Si hay nuevos datos de funciones → intégralos en widgets nuevos o existentes
+- Mantén el conteo total de gráficos PAR (2, 4, 6, 8...)
+- Cambios cosméticos (colores, títulos, disposición) → preserva la estructura de datos"""
+        base += iteration_block
+
+    base += f"""
 
 ## PALETAS DE COLORES (elige UNA por gráfico)
 
@@ -675,6 +760,8 @@ Gráfico correcto:
   "colorPalette": ["#4ECDC4"]
 }}"""
 
+    return base
+
 
 # ── Step 1: Planificador ──────────────────────────────────────────────
 
@@ -684,20 +771,28 @@ def generate_execution_plan(
     project_id: int,
     engine: AnalyticsEngine,
     tables_context: list[dict],
+    user_prompt: str | None = None,
+    current_dashboard: dict[str, Any] | None = None,
 ) -> dict:
     """Call IA 1 to produce an execution plan.
 
     Returns the parsed JSON: {ejecutar: [...], message: "..."}.
+    When user_prompt and current_dashboard are provided, runs in iteration mode.
     """
     client = _get_client()
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    system_prompt = _build_plan_prompt(tables_context)
+    system_prompt = _build_plan_prompt(tables_context, user_prompt, current_dashboard)
+    user_content = (
+        "Modifica el dashboard existente basándote en el pedido del usuario."
+        if user_prompt and current_dashboard
+        else "Genera el plan de ejecución para analizar este dataset."
+    )
     messages = [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": "Genera el plan de ejecución para analizar este dataset. Responde con el JSON.",
+            "content": user_content,
         },
     ]
 
@@ -772,12 +867,19 @@ def execute_plan(plan_json: dict, engine: AnalyticsEngine) -> dict:
 # ── Step 3: Diseñador ────────────────────────────────────────────────
 
 
-def generate_final_dashboard(execution_results: dict) -> dict:
-    """Call IA 2 to design the dashboard from analytical results."""
+def generate_final_dashboard(
+    execution_results: dict,
+    user_prompt: str | None = None,
+    current_dashboard: dict[str, Any] | None = None,
+) -> dict:
+    """Call IA 2 to design the dashboard from analytical results.
+
+    When user_prompt and current_dashboard are provided, runs in iteration mode.
+    """
     client = _get_client()
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    system_prompt = _build_designer_prompt(execution_results)
+    system_prompt = _build_designer_prompt(execution_results, user_prompt, current_dashboard)
     messages = [
         {"role": "system", "content": system_prompt},
         {
@@ -851,6 +953,50 @@ def generate_dashboard(
 
     # Step 3 — Diseñador
     designer_output = generate_final_dashboard(execution_results)
+
+    # Post-process
+    graficos = _enforce_even_charts(designer_output.get("graficos", []))
+    designer_output["graficos"] = graficos
+
+    # Map to widgets
+    widgets = _map_to_widgets(designer_output)
+
+    return {
+        "widgets": widgets,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "resumen_ejecutivo": designer_output.get("resumen_ejecutivo", ""),
+    }
+
+
+def iterate_dashboard(
+    db: Session,
+    project_id: int,
+    engine: AnalyticsEngine,
+    tables_context: list[dict],
+    current_dashboard: dict[str, Any],
+    user_prompt: str,
+) -> dict[str, Any]:
+    """Run the iterative 3-step pipeline for dashboard modification.
+
+    Reuses the full Planificador → Middleware → Diseñador pipeline with
+    iteration context injected into prompt builders.
+    """
+    # Step 1 — Planificador (with iteration context)
+    plan = generate_execution_plan(
+        db, project_id, engine, tables_context,
+        user_prompt=user_prompt,
+        current_dashboard=current_dashboard,
+    )
+
+    # Step 2 — Middleware
+    execution_results = execute_plan(plan, engine)
+
+    # Step 3 — Diseñador (with iteration context)
+    designer_output = generate_final_dashboard(
+        execution_results,
+        user_prompt=user_prompt,
+        current_dashboard=current_dashboard,
+    )
 
     # Post-process
     graficos = _enforce_even_charts(designer_output.get("graficos", []))

@@ -162,6 +162,12 @@ class GenerateDashboardResponse(BaseModel):
     resumen_ejecutivo: str | None = None
 
 
+class IterateDashboardRequest(BaseModel):
+    """Request body for POST /users/{user_id}/projects/{project_id}/chat."""
+    prompt: str = Field(..., min_length=1, strip_whitespace=True)
+    current_dashboard: dict[str, Any]
+
+
 class ProjectDetail(BaseModel):
     """Full project detail with tables for the project detail view."""
     id: int
