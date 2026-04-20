@@ -77,7 +77,8 @@ async function loadTablesParallel() {
 onMounted(async () => {
   await fetchProject()
   if (project.value) {
-    // Expand all tables by default
+    // Bug 1 fix: clear stale IDs from previous projects before expanding
+    collapseAll()
     expandAll(project.value.tables.map(t => t.id))
     await loadTablesParallel()
   }
@@ -99,6 +100,8 @@ async function onAdditionalUpload(_payload: { userId: number; projectId: number 
   toast.show('Datos agregados correctamente', 'success')
   await fetchProject()
   if (project.value) {
+    // Bug 2 fix: expand newly added tables so user sees them
+    expandAll(project.value.tables.map(t => t.id))
     await loadTablesParallel()
   }
 }
@@ -108,19 +111,22 @@ function handleExpandAll() {
   expandAll(project.value.tables.map(t => t.id))
 }
 
+// Bug 3 fix: check only current project IDs, not stale ones from other projects
+function allCurrentTablesExpanded(): boolean {
+  if (!project.value) return false
+  const currentIds = project.value.tables.map(t => t.id)
+  return currentIds.every(id => expandedTableIds.value.has(id))
+}
+
 const collapseLabel = computed(() => {
-  if (!project.value) return 'Expandir todo'
-  return expandedTableIds.value.size === project.value.tables.length
-    ? 'Compactar todo'
-    : 'Expandir todo'
+  return allCurrentTablesExpanded() ? 'Compactar todo' : 'Expandir todo'
 })
 
 function handleCollapseToggle() {
-  if (!project.value) return
-  if (expandedTableIds.value.size === project.value.tables.length) {
+  if (allCurrentTablesExpanded()) {
     collapseAll()
-  } else {
-    handleExpandAll()
+  } else if (project.value) {
+    expandAll(project.value.tables.map(t => t.id))
   }
 }
 </script>
