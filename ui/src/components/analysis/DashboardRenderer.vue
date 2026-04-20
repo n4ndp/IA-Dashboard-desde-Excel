@@ -7,11 +7,10 @@ import { computed } from 'vue'
 import type { DashboardWidgetMap, KpiWidgetData, ChartWidgetData, InsightWidgetData } from '../../types'
 import ChartWidget from './ChartWidget.vue'
 import InsightWidget from './InsightWidget.vue'
-import { TrendingUp, TrendingDown, Minus, FileText } from 'lucide-vue-next'
+import { TrendingUp, TrendingDown, Minus } from 'lucide-vue-next'
 
 const props = defineProps<{
   widgets: DashboardWidgetMap[]
-  resumen?: string
 }>()
 
 const kpiWidgets = computed(() =>
@@ -57,18 +56,6 @@ const trendColor = {
 
 <template>
   <div class="animate-fade-in">
-    <!-- Resumen ejecutivo banner -->
-    <div
-      v-if="resumen"
-      class="mb-6 rounded-xl border border-border bg-surface-raised p-4"
-    >
-      <div class="mb-2 flex items-center gap-2">
-        <FileText class="h-4 w-4 text-primary" />
-        <h3 class="text-sm font-semibold text-text-primary">Resumen Ejecutivo</h3>
-      </div>
-      <div class="text-sm leading-relaxed text-text-secondary whitespace-pre-line">{{ resumen }}</div>
-    </div>
-
     <!-- KPI row -->
     <div v-if="kpiWidgets.length > 0" class="mb-6 grid grid-cols-2 gap-4">
       <div

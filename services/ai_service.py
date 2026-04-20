@@ -153,9 +153,23 @@ DESIGNER_SCHEMA = {
                     "additionalProperties": False,
                 },
             },
+            "insights": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "emoji": {"type": "string"},
+                        "content": {"type": "string"},
+                        "severity": {"type": "string"},
+                    },
+                    "required": ["id", "emoji", "content", "severity"],
+                    "additionalProperties": False,
+                },
+            },
             "accion_realizada": {"type": ["string", "null"]},
         },
-        "required": ["resumen_ejecutivo", "kpis", "graficos", "accion_realizada"],
+        "required": ["resumen_ejecutivo", "kpis", "graficos", "insights", "accion_realizada"],
         "additionalProperties": False,
     },
 }
@@ -596,9 +610,9 @@ JSON completo del dashboard actual:
 
 ### REGLAS DE PRESERVACIÓN:
 
-1. **Copia fiel por ID**: Cada widget existente (k1, k2, g1, g2…) debe aparecer en tu output EXACTAMENTE con los mismos datos, colores, títulos y tipo, A MENOS que el usuario haya pedido cambiar ESE widget específico.
-2. **Estabilidad de IDs**: Los IDs existentes (k1, g1, g2…) NO cambian. Asigna IDs nuevos (k3, g3, g4…) solo a widgets creados desde cero.
-3. **Preservación de datos exactos**: Copia los valores numéricos, arrays de data y series TAL CUAL. No redondees, no recalculas, no reordenes datos existentes.
+1. **Copia fiel por ID**: Cada widget existente (k1, k2, g1, g2, i1, i2…) debe aparecer en tu output EXACTAMENTE con los mismos datos, colores, títulos y tipo, A MENOS que el usuario haya pedido cambiar ESE widget específico.
+2. **Estabilidad de IDs**: Los IDs existentes (k1, g1, g2, i1…) NO cambian. Asigna IDs nuevos (k3, g3, g4, i3…) solo a widgets creados desde cero.
+3. **Preservación de datos exactos**: Copia los valores numéricos, arrays de data y series TAL CUAL. No redondees, no recalculas, no reordenes datos existentes. Los insights existentes se copian con su emoji, content y severity intactos.
 4. **Cambios cosméticos**: Si el usuario pide cambiar colores de g1, cambias SOLO colorPalette de g1. El resto de g1 (data, title, chartType, variant) queda idéntico. Todos los demás widgets quedan idénticos.
 5. **Datos nuevos = widgets adicionales**: Si el usuario pide un gráfico nuevo y hay datos de funciones nuevas, AGREGA widgets nuevos. Los existentes se mantienen intactos.
 
@@ -613,7 +627,6 @@ JSON completo del dashboard actual:
 
 ### REGLAS DE ESTRUCTURA:
 
-- El total de `graficos` debe ser PAR (2, 4, 6, 8…). Si al agregar queda impar, agrega otro widget con datos disponibles o elimina el de menor valor.
 - Si hay datos de funciones nuevas → intégralos en widgets nuevos con IDs incrementales.
 - **accion_realizada**: Describe el cambio específico Y confirma qué preservaste. Ej: "Cambié colores de g1 a Paleta Neón, g2 y KPIs sin cambios". NUNCA dejes este campo vacío en modo iteración."""
         base += iteration_block
@@ -664,12 +677,18 @@ Paleta Neón:       ["#22D3EE", "#A3E635", "#FB923C", "#F472B6", "#818CF8", "#34
 - trend: "up" | "down" | "neutral" — SOLO si tienes datos reales de crecimiento
 - trendValue: "+12.3%" o "-5.1%" — SOLO si tienes el % calculado
 
-## REGLAS DE INSIGHTS (resumen_ejecutivo)
+## REGLAS DE INSIGHTS
 
-El resumen_ejecutivo debe ser Markdown con bullets accionables.
-- Si el dataset es pequeño (≤4 gráficos): 4-6 bullets
-- Si el dataset es mediano (5-8 gráficos): 6-8 bullets
-- Si el dataset es grande (8+ gráficos): 8-12 bullets
+Generá insights como widgets estructurados en el array `insights`. Cada insight es un objeto con:
+- id: "i1", "i2", etc.
+- emoji: un emoji representativo (🔥 📈 🏆 ⚠️ 📉 💡 📊)
+- content: texto accionable con datos reales
+- severity: "positive" | "negative" | "warning" | "info"
+
+Cantidad:
+- Dataset pequeño (≤4 gráficos): 4-6 insights
+- Dataset mediano (5-8 gráficos): 6-8 insights
+- Dataset grande (8+ gráficos): 8-12 insights
 
 MALO ❌: "Las ventas son altas en Lima"
 BUENO ✅: "🔥 Lima lidera con $45,200 representando el 42% del total — concentrar esfuerzos de marketing aquí"
@@ -680,14 +699,15 @@ BUENO ✅: "📊 Correlación cantidad-ventas de 0.72 (alta) — a mayor volumen
 MALO ❌: "El mes de enero fue bueno"
 BUENO ✅: "📈 Enero fue el pico con $72,000 (+23% vs diciembre) — investigar qué impulsó ese crecimiento"
 
-Estructura recomendada del resumen:
-- 1-2 bullets de hallazgos positivos (🔥 🏆 📈)
-- 1-2 bullets de oportunidades o advertencias (⚠️ 📉 💡)
-- 1 bullet de correlación o patrón interesante (📊)
+Severidad por tipo:
+- positive (verde): logros, liderazgos, picos
+- negative (rojo): caídas, pérdidas, bajos desempeños
+- warning (amarillo): concentración de riesgo, dependencia
+- info (azul): correlaciones, patrones, distribuciones
 
 ## REGLAS DE DISEÑO
 
-- El número total de `graficos` DEBE ser par — obligatorio para el layout (2, 4, 6, 8, 10, 12...)
+- El número total de `graficos` puede ser cualquier cantidad (no hay restricción de par/impar)
 - La cantidad de gráficos y KPIs DEBE coincidir con el objetivo que el Arquitecto indicó en su mensaje
 - Si recibiste 10+ funciones con datos útiles → genera 8-12 gráficos (no te quedes en 4!)
 - Si recibiste 7-9 funciones → genera 6-8 gráficos
@@ -926,22 +946,8 @@ def generate_final_dashboard(
 # ── Post-processing helpers ───────────────────────────────────────────
 
 
-def _enforce_even_charts(graficos: list[dict]) -> list[dict]:
-    """Drop lowest-value chart if count is odd — layout requires even count."""
-    if len(graficos) % 2 == 0 or not graficos:
-        return graficos
-
-    # Score each chart by aggregate data value
-    scored = [
-        (i, sum(item.get("value", 0) for item in (g.get("data") or [])))
-        for i, g in enumerate(graficos)
-    ]
-    drop_idx = min(scored, key=lambda x: x[1])[0]
-    return [g for i, g in enumerate(graficos) if i != drop_idx]
-
-
 def _map_to_widgets(designer_output: dict) -> list[dict]:
-    """Map IA 2 output (kpis + graficos) to frontend-compatible widgets[] (AD-6)."""
+    """Map IA 2 output (kpis + graficos + insights) to frontend-compatible widgets[] (AD-6)."""
     widgets: list[dict] = []
 
     for kpi in designer_output.get("kpis", []):
@@ -949,6 +955,9 @@ def _map_to_widgets(designer_output: dict) -> list[dict]:
 
     for graf in designer_output.get("graficos", []):
         widgets.append({**graf, "type": "chart"})
+
+    for insight in designer_output.get("insights", []):
+        widgets.append({**insight, "type": "insight"})
 
     return widgets
 
@@ -974,10 +983,6 @@ def generate_dashboard(
 
     # Step 3 — Diseñador
     designer_output = generate_final_dashboard(execution_results)
-
-    # Post-process
-    graficos = _enforce_even_charts(designer_output.get("graficos", []))
-    designer_output["graficos"] = graficos
 
     # Map to widgets
     widgets = _map_to_widgets(designer_output)
@@ -1018,10 +1023,6 @@ def iterate_dashboard(
         user_prompt=user_prompt,
         current_dashboard=current_dashboard,
     )
-
-    # Post-process
-    graficos = _enforce_even_charts(designer_output.get("graficos", []))
-    designer_output["graficos"] = graficos
 
     # Map to widgets
     widgets = _map_to_widgets(designer_output)

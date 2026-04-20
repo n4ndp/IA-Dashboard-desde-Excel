@@ -16,7 +16,7 @@ const props = defineProps<{
   existingDashboard?: { widgets: unknown[] } | null
 }>()
 
-const { state, widgets, errorMessage, resumenEjecutivo, generate, iterate } = useDashboard(
+const { state, widgets, errorMessage, generate, iterate } = useDashboard(
   props.userId,
   props.projectId,
   props.existingDashboard as { widgets: import('../../types').DashboardWidgetMap[] } | null | undefined,
@@ -102,7 +102,6 @@ async function handleChatSubmit() {
     <DashboardRenderer
       v-else-if="state === 'generated'"
       :widgets="widgets"
-      :resumen="resumenEjecutivo"
     />
 
     <!-- Chat overlay — visible only when dashboard is generated -->

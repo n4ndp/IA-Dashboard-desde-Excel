@@ -101,34 +101,34 @@
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│                    Frontend (Vue 3)                       │
+│                    Frontend (Vue 3)                      │
 │  LoginView → ProjectsView → DashboardView                │
-│  ┌─────────┐  ┌─────────────┐  ┌───────────────────┐    │
-│  │ Datos   │  │  Análisis   │  │  Chat Overlay     │    │
-│  │ Tab     │  │  Tab        │  │  (iteración)      │    │
-│  └─────────┘  └─────────────┘  └───────────────────┘    │
-│         │            │                │                   │
+│  ┌─────────┐  ┌─────────────┐  ┌───────────────────┐     │
+│  │ Datos   │  │  Análisis   │  │  Chat Overlay     │     │
+│  │ Tab     │  │  Tab        │  │  (iteración)      │     │
+│  └─────────┘  └─────────────┘  └───────────────────┘     │
+│         │            │                │                  │
 │         └────────────┼────────────────┘                  │
 │                      │ /api/*                            │
-│              Nginx (proxy)                                │
+│              Nginx (proxy)                               │
 └──────────────────────┼───────────────────────────────────┘
                        │
 ┌──────────────────────┼───────────────────────────────────┐
-│              Backend (FastAPI)                            │
-│                      │                                    │
-│  ┌───────────┐  ┌────┴────┐  ┌──────────────────┐       │
-│  │ Routes    │→ │Services │→ │ AI Pipeline       │       │
-│  │           │  │         │  │ Planificador (IA) │       │
-│  │ users     │  │ excel   │  │      ↓            │       │
-│  │ projects  │  │ analytics│  │ Middleware (PY)   │       │
-│  │ tables    │  │ ai      │  │      ↓            │       │
-│  │ generate  │  │         │  │ Diseñador (IA)    │       │
-│  └───────────┘  └─────────┘  └──────────────────┘       │
-│                      │                                    │
-│              ┌───────┴───────┐                            │
-│              │  PostgreSQL   │                            │
-│              │  (JSONB)      │                            │
-│              └───────────────┘                            │
+│              Backend (FastAPI)                           │
+│                      │                                   │
+│  ┌───────────┐  ┌────┴─────┐  ┌───────────────────┐      │
+│  │ Routes    │→ │Services  │→ │ AI Pipeline       │      │
+│  │           │  │          │  │ Planificador (IA) │      │
+│  │ users     │  │ excel    │  │      ↓            │      │
+│  │ projects  │  │ analytics│  │ Middleware (PY)   │      │
+│  │ tables    │  │ ai       │  │      ↓            │      │
+│  │ generate  │  │          │  │ Diseñador (IA)    │      │
+│  └───────────┘  └──────────┘  └───────────────────┘      │
+│                      │                                   │
+│              ┌───────┴───────┐                           │
+│              │  PostgreSQL   │                           │
+│              │  (JSONB)      │                           │
+│              └───────────────┘                           │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -145,17 +145,7 @@
 
 ## Modelo de Datos
 
-```text
-┌──────────┐     ┌──────────────┐     ┌──────────┐
-│  Usuario  │────→│   Proyecto   │────→│  Tabla   │
-│ id, nombre│  1:N│ id, nombre,  │  1:N│ id, hoja │
-└──────────┘     │ dashboard_   │     └──────────┘
-                 │ config       │          │ 1:N
-                 └──────────────┘     ┌────┴────┐
-                                      │ Columna │ (tipo inferido)
-                                      │ Fila    │ (data JSONB)
-                                      └─────────┘
-```
+![Modelo de Datos](img/modeloER.png)
 
 ### Por qué este modelo híbrido
 
@@ -180,7 +170,7 @@ La decisión arquitectónica central: **NO usar un único loop agéntico**. En s
 │  → Output: { ejecutar: [...funciones], message }        │
 │  → Usa Structured Outputs con JSON Schema               │
 ├─────────────────────────────────────────────────────────┤
-│  Paso 2 — MIDDLEWARE (Python/pandas)                     │
+│  Paso 2 — MIDDLEWARE (Python/pandas)                    │
 │  Ejecuta funciones analíticas REALES:                   │
 │  • get_column_summary    • group_by_category            │
 │  • calculate_kpi         • time_series_trend            │
@@ -192,12 +182,12 @@ La decisión arquitectónica central: **NO usar un único loop agéntico**. En s
 ├─────────────────────────────────────────────────────────┤
 │  Paso 3 — DISEÑADOR (IA)                                │
 │  "Transformá los resultados en widgets de dashboard"    │
-│  → Output: { resumen_ejecutivo, kpis, graficos }       │
+│  → Output: { resumen_ejecutivo, kpis, graficos }        │
 │  → Usa Structured Outputs con DESIGNER_SCHEMA (strict)  │
 └─────────────────────────────────────────────────────────┘
          │
          ▼
-  Post-proceso: _enforce_even_charts + _map_to_widgets
+  Post-proceso: _map_to_widgets (kpis + graficos + insights)
 ```
 
 ### Por qué determinístico y no agéntico
@@ -261,7 +251,7 @@ La decisión arquitectónica central: **NO usar un único loop agéntico**. En s
 | **Backend** | FastAPI 0.115 + Uvicorn | Async nativo, OpenAPI automático, validación Pydantic |
 | **ORM** | SQLAlchemy 2.0 | Sessions con lifecycle gestionado por FastAPI |
 | **Base de Datos** | PostgreSQL 15 | JSONB para datos dinámicos, relacional para estructura |
-| **IA** | OpenAI gpt-4o-mini | Structured Outputs, costo eficiente |
+| **IA** | OpenAI gpt-4o | Structured Outputs, costo eficiente |
 | **Analítica** | pandas + numpy | 10 funciones analíticas parametrizadas |
 | **Infra** | Docker Compose + AWS EC2 | 4 servicios, health checks, deploy en un comando |
 | **Proxy** | Nginx Alpine | Template con envsubst para configuración dinámica |
@@ -286,7 +276,7 @@ cd IA-Dashboard-desde-Excel
 cat > .env << 'EOF'
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/postgres
 OPENAI_API_KEY=tu-key-aqui
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o
 BACKEND_URL=http://backend:8000
 EOF
 
@@ -301,6 +291,17 @@ docker-compose up --build
 | Frontend | http://localhost:5173 |
 | API Docs (Swagger) | http://localhost:8000/docs |
 | Adminer (DB) | http://localhost:8080 |
+
+### Datasets de prueba
+
+La carpeta `examples/` contiene datasets de ejemplo para probar la aplicación:
+
+| Archivo | Tema | Columnas destacadas |
+|---------|------|-------------------|
+| `ecommerce_test_dataset.xlsx` | E-commerce | Ventas, categorías, regiones, tendencias |
+| `restaurant_dataset.xlsx` | Restaurante | Platos, precios, pedidos, satisfacción |
+| `fitness_dataset.xlsx` | Fitness | Ejercicios, calorias, duración, frecuencia |
+| `education_dataset.xlsx` | Educación | Estudiantes, calificaciones, asistencia |
 
 ---
 
@@ -329,7 +330,7 @@ docker-compose up --build
 |----------|-----|---------|
 | `DATABASE_URL` | Conexión SQLAlchemy | `postgresql://postgres:postgres@postgres:5432/postgres` |
 | `OPENAI_API_KEY` | Cliente OpenAI | *(requerida)* |
-| `OPENAI_MODEL` | Modelo IA | `gpt-4o-mini` |
+| `OPENAI_MODEL` | Modelo IA | `gpt-4o` |
 | `BACKEND_PORT` | Puerto interno backend | `8000` |
 | `FRONTEND_PORT` | Puerto host frontend | `5173` |
 | `BACKEND_URL` | Proxy Nginx → backend | `http://backend:8000` |
@@ -389,15 +390,15 @@ Frontend Vue 3 + Backend FastAPI conectados via REST API con proxy Nginx. Ingest
 
 Modelo híbrido relacional + JSONB (ver [Modelo de Datos](#modelo-de-datos)). La estructura (usuarios, proyectos, tablas) usa relaciones SQL para queries eficientes. El contenido dinámico (filas con datos variables) usa JSONB para flexibilidad sin migraciones. `dashboard_config` persiste el JSON de widgets como campo del proyecto.
 
-### 3. Integración de IA (Puntos Extra)
+### 3. Integración de IA
 
-- **OpenAI gpt-4o-mini** con Structured Outputs en dos pasos del pipeline (Planificador y Diseñador).
+- **OpenAI gpt-4o** con Structured Outputs en dos pasos del pipeline (Planificador y Diseñador).
 - **Planificador:** Analiza columnas y datos muestra → propone funciones analíticas concretas.
 - **Diseñador:** Transforma resultados numéricos en widgets de dashboard (KPIs, gráficos, insights).
 - **Chat iterativo:** El Diseñador recibe el dashboard actual y hace modificaciones quirúrgicas con reglas de preservación.
 - **Middleware Python:** 10 funciones pandas que ejecutan los cálculos reales — la IA nunca toca los números.
 
-### 4. Despliegue y DevOps (Puntos Extra)
+### 4. Despliegue y DevOps
 
 - **Docker Compose** con 4 servicios, health checks y dependencias condicionales.
 - **Multi-stage builds** para backend (Python slim) y frontend (Node build → Nginx runtime).

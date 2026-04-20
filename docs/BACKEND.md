@@ -108,8 +108,7 @@ Step 3 — Diseñador (IA)
   → Output: { resumen_ejecutivo, kpis, graficos, accion_realizada }
 
 Post-proceso
-  _enforce_even_charts(...)  → garantiza cantidad par de gráficos
-  _map_to_widgets(...)       → convierte a formato de widgets
+  _map_to_widgets(...)       → convierte kpis + graficos + insights a formato de widgets
 ```
 
 ### 4.1 IA Planificadora (`_build_plan_prompt`)
