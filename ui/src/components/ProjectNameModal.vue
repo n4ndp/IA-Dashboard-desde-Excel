@@ -6,9 +6,12 @@ import { ref } from 'vue'
 import AppButton from './base/AppButton.vue'
 import AppInput from './base/AppInput.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   defaultName: string
-}>()
+  loading?: boolean
+}>(), {
+  loading: false,
+})
 
 const emit = defineEmits<{
   confirm: [name: string]
@@ -50,7 +53,8 @@ function handleConfirm() {
           <AppButton
             variant="primary"
             size="md"
-            :disabled="!projectName.trim()"
+            :loading="loading"
+            :disabled="!projectName.trim() || loading"
             @click="handleConfirm"
           >
             Crear

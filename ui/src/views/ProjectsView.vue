@@ -24,6 +24,7 @@ const loading = ref(false)
 const error = ref('')
 const showDeleteModal = ref(false)
 const deletingProject = ref<ProjectSummary | null>(null)
+const deleteLoading = ref(false)
 
 const { cardSkeletons } = useSkeleton()
 const skeletons = computed(() => cardSkeletons(6))
@@ -76,7 +77,8 @@ function cancelDelete() {
 }
 
   async function confirmDelete() {
-    if (!deletingProject.value) return
+    if (!deletingProject.value || deleteLoading.value) return
+    deleteLoading.value = true
     try {
       await deleteProject(userId.value, deletingProject.value.id)
       projects.value = projects.value.filter(
@@ -88,6 +90,7 @@ function cancelDelete() {
     error.value = msg
     toast.show(msg, 'error')
   } finally {
+    deleteLoading.value = false
     showDeleteModal.value = false
     deletingProject.value = null
   }
@@ -185,6 +188,7 @@ function cancelDelete() {
     <DeleteConfirmModal
       v-if="showDeleteModal && deletingProject"
       :project-name="deletingProject.nombre_archivo"
+      :loading="deleteLoading"
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     />

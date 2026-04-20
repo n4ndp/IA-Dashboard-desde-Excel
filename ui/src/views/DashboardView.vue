@@ -106,11 +106,6 @@ async function onAdditionalUpload(_payload: { userId: number; projectId: number 
   }
 }
 
-function handleExpandAll() {
-  if (!project.value) return
-  expandAll(project.value.tables.map(t => t.id))
-}
-
 // Bug 3 fix: check only current project IDs, not stale ones from other projects
 function allCurrentTablesExpanded(): boolean {
   if (!project.value) return false
@@ -219,8 +214,9 @@ function handleCollapseToggle() {
                 Tablas del proyecto
               </h3>
               <div class="h-px flex-1 bg-border" />
+            </div>
+            <div v-if="project.tables.length > 0" class="mb-4 flex justify-end">
               <AppButton
-                v-if="project.tables.length > 0"
                 variant="secondary"
                 size="sm"
                 @click="handleCollapseToggle"

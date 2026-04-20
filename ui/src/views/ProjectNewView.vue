@@ -85,6 +85,7 @@ function onUploadError(msg: string) {
     <ProjectNameModal
       v-if="showModal && uploadedFile"
       :default-name="uploadedFile.name.replace(/\.[^.]+$/, '')"
+      :loading="uploading"
       @confirm="confirmProjectName"
       @cancel="cancelModal"
     />

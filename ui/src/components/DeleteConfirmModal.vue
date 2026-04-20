@@ -6,6 +6,7 @@ import AppButton from './base/AppButton.vue'
 
 defineProps<{
   projectName: string
+  loading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -33,7 +34,7 @@ const emit = defineEmits<{
           <AppButton variant="secondary" size="md" @click="$emit('cancel')">
             Cancelar
           </AppButton>
-          <AppButton variant="danger" size="md" @click="$emit('confirm')">
+          <AppButton variant="danger" size="md" :loading="loading" @click="$emit('confirm')">
             Eliminar
           </AppButton>
         </div>

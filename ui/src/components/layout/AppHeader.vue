@@ -11,6 +11,7 @@ const router = useRouter()
 const { userName, userId, clearUser } = useUser()
 
 const dropdownOpen = ref(false)
+const logoutLoading = ref(false)
 
 function goToProjects() {
   if (userId.value) {
@@ -33,6 +34,8 @@ function closeDropdown() {
 }
 
 function logout() {
+  if (logoutLoading.value) return
+  logoutLoading.value = true
   dropdownOpen.value = false
   clearUser()
   router.push('/')
@@ -75,7 +78,8 @@ function logout() {
           </div>
           <div class="h-px bg-border mx-2" />
           <button
-            class="w-full px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-overlay transition-colors"
+            class="w-full px-3 py-2 text-left text-sm text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
+            :disabled="logoutLoading"
             @click="logout"
           >
             Cerrar sesión
